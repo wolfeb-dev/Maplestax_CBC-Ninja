@@ -1,0 +1,17 @@
+# NinjaTrader compiled artifacts
+*.dll
+*.pdb
+*.suo
+*.user
+bin/
+obj/
+
+# Editor / OS noise
+.vs/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# NinjaTrader exported bundles
+*.zip
