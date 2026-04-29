@@ -47,7 +47,7 @@ namespace NinjaTrader.NinjaScript.Indicators
     {
         [NinjaScriptProperty]
         [Display(Name = "Chart TZ", GroupName = "Time zone", Order = 1, Description = "Time zone of the chart's bar timestamps. NT8 has no public API to read the chart's Display Time Zone, so AutoDetect falls back to your Windows local TZ. If your chart's display TZ is different from your machine local (e.g., PT machine running an ET chart), pick the chart's TZ explicitly here (Eastern in that example) so session windows resolve correctly.")]
-        public MapleStaxChartTimeZone ChartTz { get; set; } = MapleStaxChartTimeZone.AutoDetect;
+        public MapleStaxChartTimeZone ChartTz { get; set; } = MapleStaxChartTimeZone.Eastern;
 
         [NinjaScriptProperty]
         [Display(Name = "Show FOBO", GroupName = "LTF Signals", Order = 1)]
@@ -515,9 +515,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 IsSuspendedWhileInactive = true;
 
                 AddPlot(new Stroke(Brushes.Green, 1), PlotStyle.Line, "EMA Fast");
-                AddPlot(new Stroke(Brushes.Red, 2), PlotStyle.Line, "EMA Slow");
-                AddPlot(new Stroke(Brushes.Blue, 3), PlotStyle.Line, "EMA Trend");
-                AddPlot(new Stroke(Brushes.Orange, DashStyleHelper.Dash, 2), PlotStyle.Line, "VWAP");
+                AddPlot(new Stroke(Brushes.Red, 1), PlotStyle.Line, "EMA Slow");
+                AddPlot(new Stroke(Brushes.Blue, 1), PlotStyle.Line, "EMA Trend");
+                AddPlot(new Stroke(Brushes.Orange, 2), PlotStyle.Line, "VWAP");
                 AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "HTFEMAFast");
                 AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "HTFEMASlow");
 
