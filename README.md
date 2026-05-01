@@ -81,21 +81,6 @@ The properties panel groups settings as follows (alphabetical in NinjaTrader's U
 - **Status table** — Show toggle, position, text size, per-row backgrounds, text colors.
 - **Time zone** — Chart TZ override (described above).
 
-## Differences from the PineScript original
-
-- **YDH/YDL → PDH/PDL with Globex session.** The PineScript version measured the previous-day H/L from the **regular session 09:30-16:00 ET** (`request.security` on a 1D series). This port measures it from the **full 23-hour Globex futures session 17:00 → 16:00 ET**, which matches CME daily candle conventions for ES/NQ. If you want strict RTH-only daily H/L, this is a 1-method change in `IsInGlobex` and the snapshot/commit timing.
-- **Origin-anchored reference lines.** PMH/PML/PDH/PDL/ORB lines start at the bar that printed the H/L instead of at the session open. They live-update during the formation window, freeze when the window closes, and extend to the next 16:00 ET close.
-- **2-day display retention.** Reference lines older than 2 days are removed each morning at 09:30 ET (chart day rollover). Today + 2 prior days remain visible.
-- **Per-bar tag stability.** Each line uses a tag derived from its origin's ET date so historical lines stay frozen at their lock points instead of being overwritten on chart redraw.
-
-## File layout
-
-```
-MapleStaxCBC.cs   single-file NinjaScript indicator (~1740 lines)
-README.md         this file
-.gitignore        NT compiled-DLL artifacts
-```
-
 ## Credits
 
 - Original concept and PineScript: **MapleStax** / **AsiaRoo**
