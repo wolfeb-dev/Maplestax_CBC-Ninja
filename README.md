@@ -1,18 +1,18 @@
 # MapleStax CBC for NinjaTrader 8
 
-A NinjaScript port of the [MapleStax CBC](https://www.tradingview.com/) PineScript indicator suite. Discretionary trading framework built around **Confirmed Body Closes** (CBC) for trend identification, plus a stack of supporting reference levels: previous-day H/L, premarket H/L, opening-range breakouts across three sessions, dual-EMA cloud, VWAP, EMA(200) trend filter, Bill Breaker grid levels, BRSG zone, CBC flip levels, and an at-a-glance status table.
+A NinjaScript port of the [MapleStax CBC](https://www.tradingview.com/) PineScript indicator suite. Discretionary trading framework built around **Candle By Candle** (CBC) method for trend identification, plus a stack of supporting reference levels: previous-day H/L, premarket H/L, opening-range breakouts across three sessions, dual-EMA cloud, VWAP, EMA(200) trend filter, Bill Breaker grid levels, BRSG zone, CBC flip levels, and an at-a-glance status table.
 
 Original PineScript by **MapleStax / AsiaRoo**, enhanced by **WildWex**. C# / NinjaScript port by **-E** maintained here.
 
 ## What the indicator does
 
-### CBC (Confirmed Body Close)
+### CBC (Candle By Candle)
 The core signal. A **bullish flip** prints when `Close > High[1]`; a **bearish flip** when `Close < Low[1]`. Strict prior-bar breaks only — no `<=`/`>=` touch flips. Operates simultaneously on the chart timeframe (LTF) and an optional higher timeframe (HTF), producing the "CBC agreement" state used by the bar coloring and status panel.
 
-- **FOBO** (Failure-Of-Break-Out): two consecutive flips in opposite directions are highlighted in yellow as a fade signal.
+- **FOBO** (Fake-Out-Break-Out): two consecutive flips in opposite directions are highlighted in yellow as a fade signal.
 - **Bar coloring**: bars repaint when LTF and HTF are both bullish (long color), both bearish (short color), or in conflict (neutral).
 - **CBC flip levels**: horizontal lines at the prior-bar high/low that the next flip would have to clear.
-- **BRSG zone**: a fractional band of the previous bar's range, used as an entry filter.
+- **BRSG zone** (Buy-Red-Sell-Green): a fractional band of the previous bar's range, used as an entry filter.
 
 ### Reference levels
 - **PDH / PDL** — Previous-day high/low from the **23-hour Globex futures session (17:00 ET → 16:00 ET)**, drawn from the candle that printed the H/L. Locks at the next 16:00 ET close; rolls over to the new session at 17:00 ET.
