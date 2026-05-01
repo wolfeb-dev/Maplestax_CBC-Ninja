@@ -2,7 +2,7 @@
 
 A NinjaScript port of the [MapleStax CBC](https://www.tradingview.com/) PineScript indicator suite. Discretionary trading framework built around **Confirmed Body Closes** (CBC) for trend identification, plus a stack of supporting reference levels: previous-day H/L, premarket H/L, opening-range breakouts across three sessions, dual-EMA cloud, VWAP, EMA(200) trend filter, Bill Breaker grid levels, BRSG zone, CBC flip levels, and an at-a-glance status table.
 
-Original PineScript by **MapleStax / AsiaRoo**, enhanced by **WildWex**. C# / NinjaScript port by -E maintained here.
+Original PineScript by **MapleStax / AsiaRoo**, enhanced by **WildWex**. C# / NinjaScript port by **-E** maintained here.
 
 ## What the indicator does
 
