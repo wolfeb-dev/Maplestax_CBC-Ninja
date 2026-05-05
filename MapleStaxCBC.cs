@@ -125,7 +125,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Display(Name = "Pivot", GroupName = "HTF Signals", Order = 6)]
-        public bool ShowHtfPivots { get; set; } = false;
+        public bool ShowHtfPivots { get; set; } = true;
 
         [NinjaScriptProperty]
         [Range(1, 20)]
@@ -134,11 +134,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Display(Name = "Resistance", GroupName = "HTF Signals", Order = 8)]
-        public Brush HtfPivotResColor { get; set; } = Brushes.Red;
+        public Brush HtfPivotResColor { get; set; } = Brushes.DarkRed;
 
         [NinjaScriptProperty]
         [Display(Name = "Support", GroupName = "HTF Signals", Order = 9)]
-        public Brush HtfPivotSupColor { get; set; } = Brushes.Green;
+        public Brush HtfPivotSupColor { get; set; } = Brushes.DarkGreen;
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -148,6 +148,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Style", GroupName = "HTF Signals", Order = 11)]
         public MapleStaxRefLineStyle HtfPivStyle { get; set; } = MapleStaxRefLineStyle.Dashed;
+
+        [NinjaScriptProperty]
+        [Display(Name = "LONG label background", GroupName = "HTF Signals", Order = 12)]
+        public Brush HtfLongLabelBg { get; set; } = Brushes.Green;
+
+        [NinjaScriptProperty]
+        [Display(Name = "SHORT label background", GroupName = "HTF Signals", Order = 13)]
+        public Brush HtfShortLabelBg { get; set; } = Brushes.Red;
+
+        [NinjaScriptProperty]
+        [Range(0, 100)]
+        [Display(Name = "Label opacity (0-100)", GroupName = "HTF Signals", Order = 14)]
+        public int HtfLabelOpacity { get; set; } = 50;
 
         [NinjaScriptProperty]
         [Display(Name = "CBC agreement bar colors", GroupName = "CBC bar colors", Order = 1)]
@@ -299,7 +312,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Display(Name = "Text", GroupName = "Status table", Order = 3)]
-        public MapleStaxStatusTextSize StatusTableTextSize { get; set; } = MapleStaxStatusTextSize.Small;
+        public MapleStaxStatusTextSize StatusTableTextSize { get; set; } = MapleStaxStatusTextSize.Normal;
 
         [NinjaScriptProperty]
         [Range(0, 5)]
@@ -380,6 +393,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double lastHtfHigh1 = double.NaN;
         private double lastHtfLow1 = double.NaN;
         private bool previousHtfCbc = false;
+        private bool pendingHtfBullLabel = false;
+        private bool pendingHtfBearLabel = false;
         private double lastClosedHtfLow = double.NaN;
         private double lastClosedHtfHigh = double.NaN;
         private DateTime lastClosedHtfOpen = NinjaTrader.Core.Globals.MinDate;
@@ -547,6 +562,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 FreezeIfNeeded(LtfPivotSupColor);
                 FreezeIfNeeded(HtfPivotResColor);
                 FreezeIfNeeded(HtfPivotSupColor);
+                FreezeIfNeeded(HtfLongLabelBg);
+                FreezeIfNeeded(HtfShortLabelBg);
                 FreezeIfNeeded(CbcFlipLtfHColor);
                 FreezeIfNeeded(CbcFlipLtfLColor);
                 FreezeIfNeeded(CbcFlipHtfHColor);
@@ -1313,9 +1330,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             bool bearFlip = Closes[idx][0] < Lows[idx][1];
             bool bullFlip = Closes[idx][0] > Highs[idx][1];
             if (previousHtfCbc && bearFlip)
+            {
                 htfState = false;
+                pendingHtfBearLabel = true;
+            }
             else if (!previousHtfCbc && bullFlip)
+            {
                 htfState = true;
+                pendingHtfBullLabel = true;
+            }
 
             lastHtfHigh1 = Highs[idx][1];
             lastHtfLow1 = Lows[idx][1];
@@ -1365,24 +1388,31 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void UpdateHtfLabelsOnLtf()
         {
             if (!HtfEnabled || !ShowHtfCbcLabels || CurrentBar < 1)
+            {
+                pendingHtfBullLabel = false;
+                pendingHtfBearLabel = false;
                 return;
+            }
 
-            bool bullChange = previousHtfCbc && !cbcState;
-            bool bearChange = !previousHtfCbc && cbcState;
+            SimpleFont labelFont = new SimpleFont("Arial", 10);
 
-            if (bullChange)
+            if (pendingHtfBullLabel)
             {
                 int barOffset = FindHtfAnchorBar(true, lastClosedHtfLow, lastClosedHtfOpen, lastClosedHtfClose, 32);
-                int drawBar = CurrentBar - barOffset;
-                double labelY = Low[barOffset] - (High[barOffset] - Low[barOffset]) * 0.3;
-                Draw.Text(this, "HTFBullLabel" + CurrentBar, "LONG", drawBar, labelY, colCbcLong);
+                Draw.Text(this, "HTFBullLabel" + CurrentBar, false, "LONG",
+                          barOffset, Low[barOffset], -25,
+                          Brushes.Black, labelFont, TextAlignment.Center,
+                          Brushes.Transparent, HtfLongLabelBg, HtfLabelOpacity);
+                pendingHtfBullLabel = false;
             }
-            if (bearChange)
+            if (pendingHtfBearLabel)
             {
                 int barOffset = FindHtfAnchorBar(false, lastClosedHtfHigh, lastClosedHtfOpen, lastClosedHtfClose, 32);
-                int drawBar = CurrentBar - barOffset;
-                double labelY = High[barOffset] + (High[barOffset] - Low[barOffset]) * 0.3;
-                Draw.Text(this, "HTFBearLabel" + CurrentBar, "SHORT", drawBar, labelY, colCbcShort);
+                Draw.Text(this, "HTFBearLabel" + CurrentBar, false, "SHORT",
+                          barOffset, High[barOffset], 25,
+                          Brushes.Black, labelFont, TextAlignment.Center,
+                          Brushes.Transparent, HtfShortLabelBg, HtfLabelOpacity);
+                pendingHtfBearLabel = false;
             }
         }
 
