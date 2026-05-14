@@ -7,7 +7,7 @@ Original PineScript by **MapleStax / AsiaRoo**, enhanced by **WildWex**. C# / Ni
 ## What the indicator does
 
 ### CBC (Candle By Candle)
-The core signal. A **bullish flip** prints when `Close > High[1]`; a **bearish flip** when `Close < Low[1]`. Strict prior-bar breaks only — no `<=`/`>=` touch flips. Operates simultaneously on the chart timeframe (LTF) and an optional higher timeframe (HTF), producing the "CBC agreement" state used by the bar coloring and status panel.
+The core signal. A **bullish flip** prints when a candle closes above the prior candle's high; a **bearish flip** when a candle closes below the prior candle's low. The prior-bar break must be strict — equal closes do not flip. Operates simultaneously on the chart timeframe (LTF) and an optional higher timeframe (HTF), producing the "CBC agreement" state used by the bar coloring and status panel.
 
 - **FOBO** (Fake-Out-Break-Out): two consecutive flips in opposite directions are highlighted in yellow as a fade signal.
 - **Bar coloring**: bars repaint when LTF and HTF are both bullish (long color), both bearish (short color), or in conflict (neutral).
@@ -17,7 +17,7 @@ The core signal. A **bullish flip** prints when `Close > High[1]`; a **bearish f
 ### Reference levels
 - **PDH / PDL** — Previous-day high/low from the **23-hour Globex futures session (17:00 ET → 16:00 ET)**, drawn from the candle that printed the H/L. Locks at the next 16:00 ET close; rolls over to the new session at 17:00 ET.
 - **PMH / PML** — Premarket high/low from the **04:00 → 09:30 ET** window, drawn from the candle that printed the H/L. Lines are visible during today's RTH session and freeze at 16:00 ET.
-- **YDH/YDL backfill** — On chart load, the prior fully-completed Globex session is scanned from loaded bars so PDH/PDL render on the first bar at the live edge (no warmup needed when chart history covers the prior session).
+- **PDH/PDL backfill** — On chart load, the prior fully-completed Globex session is scanned so PDH/PDL render immediately at the live edge with no warmup, as long as your chart history covers the prior session.
 - Per-level color, width (1-4), and style (Solid / Dashed / Dotted) configurable in `Reference levels`.
 
 ### Opening Range (Sessions)
@@ -45,17 +45,29 @@ A grid of `multiplier`-spaced horizontal lines centered around a base that auto-
 Optional bar-pivot overlays on both timeframes. `N`-bar lookback (default 1) for pivot confirmation; per-side colors, line width, and dash style.
 
 ### Status table
-Compact dashboard rendered via SharpDX. Rows: Market session, CBC LTF, CBC HTF, Opening range, EMA cloud, VWAP, EMA(200) vs price. Configurable position (9 anchors), text size, and per-row colors. Left column shows row labels in a blue-gray slab; right column flips text to black on yellow backgrounds for contrast, otherwise white. Single cell borders plus a double-line frame.
+Compact on-chart dashboard. Rows: Market session, CBC LTF, CBC HTF, Opening range, EMA cloud, VWAP, EMA(200) vs price. Configurable position (9 anchors), text size, and per-row colors. Left column shows row labels in a blue-gray slab; right column flips text to black on yellow backgrounds for contrast, otherwise white.
 
 ### Status table color palette
 - Bullish row bg / Bearish row bg / Neutral row bg / Inside-range bg / Header bg — all configurable.
 
 ## Installation
 
+1. Download `MapleStaxCBC.zip` from this repository. Do not unzip it — NinjaTrader imports the archive directly.
+2. Launch NinjaTrader 8 and open the **Control Center**.
+3. Go to **Tools → Import → NinjaScript Add-On…**
+4. In the file picker, browse to the downloaded `MapleStaxCBC.zip` and click **Open**. NinjaTrader will import and compile the indicator and confirm with a success dialog.
+5. Open a chart, then **Indicators…** (or right-click the chart → Indicators). Select **MapleStaxCBC** from the list and click **Apply**.
+
+To update later, simply repeat steps 3-4 with the newer `MapleStaxCBC.zip`; NinjaTrader will overwrite the existing install.
+
+### Alternate: source-file install
+
+If you prefer to install from source (for example, to review or modify the code before compiling):
+
 1. Download `MapleStaxCBC.cs` from this repository.
-2. Drop it into your NinjaTrader 8 custom indicators folder:
+2. Place it in your NinjaTrader 8 custom indicators folder:
    `Documents\NinjaTrader 8\bin\Custom\Indicators\MapleStaxCBC.cs`
-3. In NinjaTrader, open **Tools → NinjaScript Editor**, find `MapleStaxCBC` under Indicators, and click **Compile** (F5). Resolve any reference issues NT prompts for.
+3. In NinjaTrader, open **Tools → NinjaScript Editor**, find `MapleStaxCBC` under **Indicators**, and click **Compile** (F5).
 4. Apply to a chart via **Indicators → MapleStaxCBC**.
 
 ## Important: Time Zone setting
@@ -64,8 +76,9 @@ All session windows (PDH/PDL, PMH/PML, OR sessions, Market session label, premar
 
 In the indicator's properties panel, the first setting is **`Time zone → Chart TZ`**:
 
-- `AutoDetect` *(default)* — assumes chart TZ = your Windows local TZ. Correct for most users.
-- `Eastern` / `Central` / `Mountain` / `Pacific` / `Utc` / `Local` — explicit override.
+- `Eastern` *(default)* — correct if your chart's display time zone is set to Eastern Time, which is the most common futures setup.
+- `Central` / `Mountain` / `Pacific` / `Utc` / `Local` — explicit override for charts displayed in a different time zone.
+- `AutoDetect` — falls back to your Windows local time zone.
 
 **Example:** If your machine is in Pacific Time but you've set the chart's display timezone to ET (NinjaTrader → Right-click chart → Properties → "Time zone" set to Eastern), pick **Eastern** in this dropdown. Otherwise the bars will be misinterpreted as Pacific and every session window will fire 3 hours off (or 1 hour during DST mismatches).
 
