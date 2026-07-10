@@ -2,6 +2,7 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.Gui;
@@ -65,9 +66,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "BRSG Zone", GroupName = "LTF Signals", Order = 3)]
         public bool ShowBrsgZone { get; set; } = false;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "BRSG Color", GroupName = "LTF Signals", Order = 4)]
         public Brush BrsgColor { get; set; } = Brushes.Gray;
+
+        [Browsable(false)]
+        public string BrsgColorSerializable { get { return Serialize.BrushToString(BrsgColor); } set { BrsgColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Display(Name = "High", GroupName = "LTF Signals", Order = 5)]
@@ -86,13 +90,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Bar Count", GroupName = "LTF Signals", Order = 8)]
         public int LtfPivN { get; set; } = 1;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "Resistance", GroupName = "LTF Signals", Order = 9)]
         public Brush LtfPivotResColor { get; set; } = Brushes.Red;
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string LtfPivotResColorSerializable { get { return Serialize.BrushToString(LtfPivotResColor); } set { LtfPivotResColor = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Support", GroupName = "LTF Signals", Order = 10)]
         public Brush LtfPivotSupColor { get; set; } = Brushes.Green;
+
+        [Browsable(false)]
+        public string LtfPivotSupColorSerializable { get { return Serialize.BrushToString(LtfPivotSupColor); } set { LtfPivotSupColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -128,13 +138,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Bar Count", GroupName = "HTF Signals", Order = 7)]
         public int HtfPivN { get; set; } = 1;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "Resistance", GroupName = "HTF Signals", Order = 8)]
         public Brush HtfPivotResColor { get; set; } = Brushes.DarkRed;
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string HtfPivotResColorSerializable { get { return Serialize.BrushToString(HtfPivotResColor); } set { HtfPivotResColor = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Support", GroupName = "HTF Signals", Order = 9)]
         public Brush HtfPivotSupColor { get; set; } = Brushes.DarkGreen;
+
+        [Browsable(false)]
+        public string HtfPivotSupColorSerializable { get { return Serialize.BrushToString(HtfPivotSupColor); } set { HtfPivotSupColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -145,13 +161,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Style", GroupName = "HTF Signals", Order = 11)]
         public MapleStaxRefLineStyle HtfPivStyle { get; set; } = MapleStaxRefLineStyle.Dashed;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "LONG label background", GroupName = "HTF Signals", Order = 12)]
         public Brush HtfLongLabelBg { get; set; } = Brushes.Green;
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string HtfLongLabelBgSerializable { get { return Serialize.BrushToString(HtfLongLabelBg); } set { HtfLongLabelBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "SHORT label background", GroupName = "HTF Signals", Order = 13)]
         public Brush HtfShortLabelBg { get; set; } = Brushes.Red;
+
+        [Browsable(false)]
+        public string HtfShortLabelBgSerializable { get { return Serialize.BrushToString(HtfShortLabelBg); } set { HtfShortLabelBg = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(0, 100)]
@@ -208,9 +230,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "PDH", GroupName = "Reference levels", Order = 1)]
         public bool ShowPdh { get; set; } = true;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "PDH Color", GroupName = "Reference levels", Order = 2)]
         public Brush PdhColor { get; set; } = Brushes.Lime;
+
+        [Browsable(false)]
+        public string PdhColorSerializable { get { return Serialize.BrushToString(PdhColor); } set { PdhColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -225,9 +250,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "PDL", GroupName = "Reference levels", Order = 5)]
         public bool ShowPdl { get; set; } = true;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "PDL Color", GroupName = "Reference levels", Order = 6)]
         public Brush PdlColor { get; set; } = Brushes.Red;
+
+        [Browsable(false)]
+        public string PdlColorSerializable { get { return Serialize.BrushToString(PdlColor); } set { PdlColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -242,9 +270,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "PMH", GroupName = "Reference levels", Order = 9)]
         public bool ShowPmh { get; set; } = true;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "PMH Color", GroupName = "Reference levels", Order = 10)]
         public Brush PmhColor { get; set; } = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+
+        [Browsable(false)]
+        public string PmhColorSerializable { get { return Serialize.BrushToString(PmhColor); } set { PmhColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -259,9 +290,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "PML", GroupName = "Reference levels", Order = 13)]
         public bool ShowPml { get; set; } = true;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "PML Color", GroupName = "Reference levels", Order = 14)]
         public Brush PmlColor { get; set; } = new SolidColorBrush(Color.FromRgb(239, 83, 80));
+
+        [Browsable(false)]
+        public string PmlColorSerializable { get { return Serialize.BrushToString(PmlColor); } set { PmlColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -284,9 +318,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Show Bill Breaker", GroupName = "Bill Breaker", Order = 1)]
         public bool ShowBillBreaker { get; set; } = false;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "Level Color", GroupName = "Bill Breaker", Order = 2)]
         public Brush BillBreakerColor { get; set; } = new SolidColorBrush(Color.FromRgb(50, 50, 200));
+
+        [Browsable(false)]
+        public string BillBreakerColorSerializable { get { return Serialize.BrushToString(BillBreakerColor); } set { BillBreakerColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, int.MaxValue)]
@@ -310,49 +347,79 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Header ↓", GroupName = "Status table", Order = 4)]
         public int StatusTableHeaderNewlines { get; set; } = 0;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "Bullish row bg", GroupName = "Status table", Order = 5)]
         public Brush StatusBullBg { get; set; } = new SolidColorBrush(Color.FromArgb(243, 4, 120, 87));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusBullBgSerializable { get { return Serialize.BrushToString(StatusBullBg); } set { StatusBullBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Bearish row bg", GroupName = "Status table", Order = 6)]
         public Brush StatusBearBg { get; set; } = new SolidColorBrush(Color.FromArgb(243, 155, 28, 28));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusBearBgSerializable { get { return Serialize.BrushToString(StatusBearBg); } set { StatusBearBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Neutral row bg", GroupName = "Status table", Order = 7)]
         public Brush StatusNeutralBg { get; set; } = new SolidColorBrush(Color.FromArgb(247, 55, 65, 81));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusNeutralBgSerializable { get { return Serialize.BrushToString(StatusNeutralBg); } set { StatusNeutralBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Inside-range row bg", GroupName = "Status table", Order = 8)]
         public Brush StatusInsideBg { get; set; } = new SolidColorBrush(Color.FromArgb(245, 87, 83, 78));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusInsideBgSerializable { get { return Serialize.BrushToString(StatusInsideBg); } set { StatusInsideBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Header bg", GroupName = "Status table", Order = 9)]
         public Brush StatusHeaderBg { get; set; } = new SolidColorBrush(Color.FromArgb(255, 12, 18, 34));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusHeaderBgSerializable { get { return Serialize.BrushToString(StatusHeaderBg); } set { StatusHeaderBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Label cell bg", GroupName = "Status table", Order = 10)]
         public Brush StatusLabelBg { get; set; } = new SolidColorBrush(Color.FromArgb(255, 71, 85, 105));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusLabelBgSerializable { get { return Serialize.BrushToString(StatusLabelBg); } set { StatusLabelBg = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Header text color", GroupName = "Status table", Order = 11)]
         public Brush StatusHeaderText { get; set; } = new SolidColorBrush(Color.FromRgb(203, 213, 225));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string StatusHeaderTextSerializable { get { return Serialize.BrushToString(StatusHeaderText); } set { StatusHeaderText = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Label text color", GroupName = "Status table", Order = 12)]
         public Brush StatusLabelText { get; set; } = new SolidColorBrush(Color.FromRgb(148, 163, 184));
+
+        [Browsable(false)]
+        public string StatusLabelTextSerializable { get { return Serialize.BrushToString(StatusLabelText); } set { StatusLabelText = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Display(Name = "LTF flip", GroupName = "CBC flip levels", Order = 1)]
         public bool ShowCbcFlipLtf { get; set; } = true;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "High", GroupName = "CBC flip levels", Order = 2)]
         public Brush CbcFlipLtfHColor { get; set; } = new SolidColorBrush(Color.FromRgb(21, 255, 0));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string CbcFlipLtfHColorSerializable { get { return Serialize.BrushToString(CbcFlipLtfHColor); } set { CbcFlipLtfHColor = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Low", GroupName = "CBC flip levels", Order = 3)]
         public Brush CbcFlipLtfLColor { get; set; } = new SolidColorBrush(Color.FromRgb(255, 21, 0));
+
+        [Browsable(false)]
+        public string CbcFlipLtfLColorSerializable { get { return Serialize.BrushToString(CbcFlipLtfLColor); } set { CbcFlipLtfLColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
@@ -363,13 +430,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "HTF flip", GroupName = "CBC flip levels", Order = 5)]
         public bool ShowCbcFlipHtf { get; set; } = true;
 
-        [NinjaScriptProperty]
+        [XmlIgnore]
         [Display(Name = "High", GroupName = "CBC flip levels", Order = 6)]
         public Brush CbcFlipHtfHColor { get; set; } = new SolidColorBrush(Color.FromRgb(21, 255, 0));
 
-        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string CbcFlipHtfHColorSerializable { get { return Serialize.BrushToString(CbcFlipHtfHColor); } set { CbcFlipHtfHColor = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
         [Display(Name = "Low", GroupName = "CBC flip levels", Order = 7)]
         public Brush CbcFlipHtfLColor { get; set; } = new SolidColorBrush(Color.FromRgb(255, 21, 0));
+
+        [Browsable(false)]
+        public string CbcFlipHtfLColorSerializable { get { return Serialize.BrushToString(CbcFlipHtfLColor); } set { CbcFlipHtfLColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Range(1, 4)]
