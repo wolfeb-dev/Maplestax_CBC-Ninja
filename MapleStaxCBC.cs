@@ -593,8 +593,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Brush colCbcBarShort = new SolidColorBrush(Color.FromRgb(179, 71, 0));
         private Brush colCbcBarNeutral = new SolidColorBrush(Color.FromRgb(90, 90, 90));
 
-        // Suppress the parameter list NT8 appends to the chart's indicator label.
-        public override string DisplayName { get { return Name; } }
+        [Display(Name = "Label", GroupName = "General", Order = 0)]
+        public string ChartLabel { get; set; } = string.Empty;
+
+        // The top-left chart label = the user "Label" field, blank by default.
+        // Returning it (instead of Name) also suppresses the parameter list NT8
+        // would otherwise append to the chart's indicator label.
+        public override string DisplayName { get { return ChartLabel ?? string.Empty; } }
 
         protected override void OnStateChange()
         {
