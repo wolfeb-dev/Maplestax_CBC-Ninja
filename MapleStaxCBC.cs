@@ -1,5 +1,6 @@
 #region Using declarations
 using System;
+using System.Linq;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Xml.Serialization;
@@ -609,6 +610,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 PaintPriceMarkers = false;
                 ScaleJustification = ScaleJustification.Right;
                 IsSuspendedWhileInactive = true;
+                // Multi-bar Draw.Region calls (ORB fills span up to 500 bars, line ~1249)
+                // invoke IsValidDataPoint across their range. The indicator default of
+                // MaximumBarsLookBack.TwoHundredFiftySix throws "IsValidDataPoint cannot be
+                // used with MaximumBarsLookBack.256" on every redraw once a region reaches
+                // past 256 bars. Infinite keeps the full series available so the fill renders.
+                MaximumBarsLookBack = MaximumBarsLookBack.Infinite;
 
                 AddPlot(new Stroke(Brushes.Green, 1), PlotStyle.Line, "EMA Fast");
                 AddPlot(new Stroke(Brushes.Red, 1), PlotStyle.Line, "EMA Slow");
@@ -1136,7 +1143,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 "ORNYH_", "ORNYL_", "ORLNH_", "ORLNL_", "ORASH_", "ORASL_"
             };
             var toRemove = new System.Collections.Generic.List<string>();
-            foreach (var obj in DrawObjects)
+            // Snapshot NT's live draw-object collection before enumerating: with 12
+            // instances hitting the new-day boundary near the same bar close, a sibling
+            // instance or the render thread can mutate DrawObjects mid-enumeration and
+            // throw "Collection was modified; enumeration operation may not execute".
+            foreach (var obj in DrawObjects.ToList())
             {
                 if (obj == null || string.IsNullOrEmpty(obj.Tag)) continue;
                 foreach (var prefix in prefixes)
