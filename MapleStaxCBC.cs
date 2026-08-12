@@ -681,12 +681,20 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                orHighNySeries = new Series<double>(this);
-                orLowNySeries = new Series<double>(this);
-                orHighLondonSeries = new Series<double>(this);
-                orLowLondonSeries = new Series<double>(this);
-                orHighAsianSeries = new Series<double>(this);
-                orLowAsianSeries = new Series<double>(this);
+                // These six feed Draw.Region calls that span up to 500 bars (see
+                // regionStart in UpdateOpeningRange). A Series<double> you construct
+                // does NOT inherit the indicator's MaximumBarsLookBack, so setting
+                // that property alone is not enough: without the explicit overload
+                // each series defaults to 256 bars and Draw.Region's IsValidDataPoint
+                // throws on every redraw once the region reaches past that. This
+                // mirrors NinjaTrader's own @ZigZag.cs, which passes Infinite to its
+                // self-constructed series and never sets the indicator-level property.
+                orHighNySeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                orLowNySeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                orHighLondonSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                orLowLondonSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                orHighAsianSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                orLowAsianSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
 
                 if (htfBarsPeriod != null)
                 {
