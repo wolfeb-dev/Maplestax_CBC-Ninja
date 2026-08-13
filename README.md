@@ -14,6 +14,23 @@ The core signal. A **bullish flip** prints when a candle closes above the prior 
 - **CBC flip levels**: horizontal lines at the prior-bar high/low that the next flip would have to clear.
 - **BRSG zone** (Buy-Red-Sell-Green): a fractional band of the previous bar's range, used as an entry filter.
 
+### Option zones
+When the LTF CBC and the higher-timeframe bias point in opposite directions, the method gives you three choices rather than one. This draws all three at price so you can see where each one lives. **Ships off.**
+
+Worked example, a bearish bias with the LTF CBC freshly flipped long:
+
+1. **BRSG LONG** - take the CBC trade now, against the bias. The band is the usual fractional span of the previous bar's range.
+2. **EMA20 SHORT (small)** - fade the retrace back into the 20 EMA, with the bias, at smaller size because the CBC has not confirmed. The band is the 20 EMA given the same thickness as the other two.
+3. **SGCR SHORT on flip** - wait for the CBC to confirm, then enter. This zone marks the *confirmation trigger*, not an entry: the LTF CBC flips bearish only on a close below the prior bar's low, so the zone sits just under that level. The entry band for that trade depends on a bar that has not printed yet, so drawing one would be invention.
+
+Every one of those mirrors when the bias is bullish and the CBC has flipped short (SGCR short, EMA20 long, BRSG long on flip). Zone 1 always runs against the bias; zones 2 and 3 always run with it.
+
+When the two reads **agree** there is only one trade, not three, so nothing is drawn. The existing BRSG zone and CBC flip lines already cover that case.
+
+- **Bias source** picks which higher-timeframe read is the bias: the HTF CBC state, or the HTF EMA cloud (HTF fast EMA against HTF slow EMA).
+- At the default 0.45 / 0.55 multipliers the BRSG and SGCR *entry* bands are the same span, measured from opposite ends of the prior bar. That is expected, and it is why zone 3 is a trigger rather than an entry band: otherwise two of the three zones would land on one rectangle.
+- The geometry is covered by `tools/run-zone-tests.ps1`, which extracts the shipping code out of `MapleStaxCBC.cs` and asserts against it, so the tests cannot drift from the indicator.
+
 ### Reference levels
 - **PDH / PDL** — Previous-day high/low from the **23-hour Globex futures session (17:00 ET → 16:00 ET)**, drawn from the candle that printed the H/L. Locks at the next 16:00 ET close; rolls over to the new session at 17:00 ET.
 - **PMH / PML** — Premarket high/low from the **04:00 → 09:30 ET** window, drawn from the candle that printed the H/L. Lines are visible during today's RTH session and freeze at 16:00 ET.
@@ -90,6 +107,7 @@ The properties panel groups settings as follows (alphabetical in NinjaTrader's U
 - **HTF Signals** — HTF timeframe selector, EMA cloud toggle, LONG/SHORT label settings, HTF pivot settings.
 - **LTF Signals** — FOBO toggle, EMA20 touch dots, VWAP toggle, BRSG zone, LTF pivot settings.
 - **Opening Range (Sessions)** — Per-session toggles (NY/London/Asian), OR length in minutes.
+- **Option zones** - Show toggle, bias source (HTF CBC or HTF EMA cloud), labels toggle, fill opacity, long/short colors.
 - **Reference levels** — PDH, PDL, PMH, PML toggles plus per-level color/width/style. Show level name / show level price toggles.
 - **Status table** — Show toggle, position, text size, per-row backgrounds, text colors.
 - **Time zone** — Chart TZ override (described above).

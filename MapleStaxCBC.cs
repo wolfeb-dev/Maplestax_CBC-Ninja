@@ -45,6 +45,13 @@ public enum MapleStaxStatusTablePosition
     BottomRight
 }
 
+// Which higher-timeframe read sets the trading bias the three option zones hang off.
+public enum MapleStaxOptionBias
+{
+    HtfCbc,
+    HtfEmaCloud
+}
+
 public enum MapleStaxChartTimeZone
 {
     AutoDetect,
@@ -94,6 +101,36 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Low", GroupName = "LTF Signals", Order = 6)]
         public double BrsgLowMult { get; set; } = 0.45;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show", GroupName = "Option zones", Order = 1, Description = "Draw the three trading options at price whenever the LTF CBC and the higher-timeframe bias disagree. When they agree there is only one trade, so nothing is drawn.")]
+        public bool ShowOptionZones { get; set; } = false;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Bias source", GroupName = "Option zones", Order = 2, Description = "Which higher-timeframe read is the bias: the HTF CBC state, or the HTF EMA cloud (HTF fast EMA vs HTF slow EMA).")]
+        public MapleStaxOptionBias OptionZoneBias { get; set; } = MapleStaxOptionBias.HtfCbc;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Labels", GroupName = "Option zones", Order = 3)]
+        public bool ShowOptionZoneLabels { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Opacity", GroupName = "Option zones", Order = 4, Description = "Fill opacity of the three zones, 0 to 100.")]
+        public int OptionZoneOpacity { get; set; } = 20;
+
+        [XmlIgnore]
+        [Display(Name = "Long color", GroupName = "Option zones", Order = 5)]
+        public Brush OptionZoneLongColor { get; set; } = Brushes.MediumSeaGreen;
+
+        [Browsable(false)]
+        public string OptionZoneLongColorSerializable { get { return Serialize.BrushToString(OptionZoneLongColor); } set { OptionZoneLongColor = Serialize.StringToBrush(value); } }
+
+        [XmlIgnore]
+        [Display(Name = "Short color", GroupName = "Option zones", Order = 6)]
+        public Brush OptionZoneShortColor { get; set; } = Brushes.IndianRed;
+
+        [Browsable(false)]
+        public string OptionZoneShortColorSerializable { get { return Serialize.BrushToString(OptionZoneShortColor); } set { OptionZoneShortColor = Serialize.StringToBrush(value); } }
 
         [NinjaScriptProperty]
         [Display(Name = "Pivot", GroupName = "LTF Signals", Order = 7)]
@@ -638,6 +675,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 FreezeIfNeeded(StatusLabelText);
                 FreezeIfNeeded(StatusHeaderText);
                 FreezeIfNeeded(BrsgColor);
+                FreezeIfNeeded(OptionZoneLongColor);
+                FreezeIfNeeded(OptionZoneShortColor);
                 FreezeIfNeeded(BillBreakerColor);
                 FreezeIfNeeded(PdhColor);
                 FreezeIfNeeded(PdlColor);
@@ -725,6 +764,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UpdateOpeningRange();
                 UpdateBillBreaker();
                 UpdateFlipLevelsAndBrsg();
+                // After UpdateLtfCbc and UpdateEmaCloud, so cbcState and Values[1][0] (the
+                // 20 EMA) are both current for this bar.
+                UpdateOptionZones();
                 UpdateLtfPivots();
                 DrawHtfPivotLines();
                 UpdateStatusPanel();
@@ -1353,6 +1395,136 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double bot = Low[1] + rng * BrsgLowMult;
                 Draw.Line(this, "BRSGTop", false, 1, top, 0, top, BrsgColor, DashStyleHelper.Solid, CbcFlipLtfWidth);
                 Draw.Line(this, "BRSGBot", false, 1, bot, 0, bot, BrsgColor, DashStyleHelper.Solid, CbcFlipLtfWidth);
+            }
+        }
+
+        // <OptionZoneGeometry>
+        // Pure geometry for Maple's three trading options. No NinjaTrader type crosses this
+        // boundary, which is what lets tools/run-zone-tests.ps1 extract this exact region and
+        // compile it standalone against tools/OptionZoneTests.cs. Keep it that way.
+        internal static class OptionZoneGeometry
+        {
+            internal struct Zones
+            {
+                public double Lo1, Hi1, Lo2, Hi2, Lo3, Hi3;
+                public bool Long1, Long2, Long3;
+            }
+
+            // Returns false when there is nothing to draw: the two reads agree (that is one
+            // trade, not three), the prior bar has no range, or the EMA has not formed.
+            internal static bool Compute(bool biasBull, bool ltfBull, double prevHigh, double prevLow,
+                                         double ema20, double lowMult, double highMult, out Zones z)
+            {
+                z = default(Zones);
+
+                if (ltfBull == biasBull)
+                    return false;
+
+                double rng = prevHigh - prevLow;
+                if (!(rng > 0) || double.IsNaN(ema20))
+                    return false;
+
+                double bandH = rng * System.Math.Abs(highMult - lowMult);
+                double half = bandH * 0.5;
+
+                // Zone 1: take the CBC trade now, against the bias. BRSG measures up from the
+                // prior bar's low, SGCR down from its high, so the two remain correct mirrors
+                // even if the multipliers are set asymmetrically.
+                z.Lo1 = !biasBull ? prevLow + rng * lowMult : prevHigh - rng * highMult;
+                z.Hi1 = !biasBull ? prevLow + rng * highMult : prevHigh - rng * lowMult;
+                z.Long1 = !biasBull;
+
+                // Zone 2: fade the retrace into the 20 EMA, with the bias, smaller size. The
+                // EMA is a line, so it takes the same band thickness as the others rather than
+                // an invented tolerance.
+                z.Lo2 = ema20 - half;
+                z.Hi2 = ema20 + half;
+                z.Long2 = biasBull;
+
+                // Zone 3: wait for the CBC to confirm, then enter. That entry band depends on a
+                // bar which has not printed, so drawing one would be fiction. What is knowable
+                // now is the trigger: the LTF CBC flips bearish on Close < prior low and bullish
+                // on Close > prior high. Marking the far side of that level is both the honest
+                // rendering and what keeps zone 3 off zone 1's rectangle, since at the symmetric
+                // default multipliers the BRSG and SGCR entry bands are the very same span.
+                z.Lo3 = !biasBull ? prevLow - bandH : prevHigh;
+                z.Hi3 = !biasBull ? prevLow : prevHigh + bandH;
+                z.Long3 = biasBull;
+
+                return true;
+            }
+        }
+        // </OptionZoneGeometry>
+
+        // Fixed tags, so each call replaces the previous zone in place. Nothing here is
+        // dated, so CleanupOldDrawings' prefix sweep never touches these.
+        private static readonly string[] optionZoneTags = { "MSOptZone1", "MSOptZone2", "MSOptZone3" };
+        private static readonly string[] optionZoneLabelTags = { "MSOptLbl1", "MSOptLbl2", "MSOptLbl3" };
+
+        private void ClearOptionZones()
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                RemoveDrawObject(optionZoneTags[i]);
+                RemoveDrawObject(optionZoneLabelTags[i]);
+            }
+        }
+
+        // Maple's three trading options, drawn at price.
+        //
+        // They exist only while the LTF CBC and the higher-timeframe bias disagree. With a
+        // bearish bias and the LTF CBC flipped long, the choice is: take the CBC long on a
+        // BRSG entry (against the bias), fade the rally into the 20 EMA at smaller size
+        // (with the bias, unconfirmed), or wait for the CBC to flip back short and take
+        // SGCR (with the bias, confirmed). Every one of those mirrors under a bullish bias.
+        //
+        // When the two reads agree there is one trade, not three, so nothing is drawn.
+        private void UpdateOptionZones()
+        {
+            // Warm-up: until the HTF series has closed a bar there is no bias. previousHtfCbc
+            // seeds bearish and actualHtfEmaBullish seeds bullish, so without this guard the
+            // opening bars would draw zones off a bias nothing has measured yet.
+            if (!ShowOptionZones || !HtfEnabled || CurrentBar < 1
+                || !htfDataSeriesAdded || htfSeriesIndex < 0 || CurrentBars[htfSeriesIndex] < 2)
+            {
+                ClearOptionZones();
+                return;
+            }
+
+            bool biasBull = OptionZoneBias == MapleStaxOptionBias.HtfEmaCloud
+                ? actualHtfEmaBullish
+                : previousHtfCbc;
+
+            OptionZoneGeometry.Zones z;
+            if (!OptionZoneGeometry.Compute(biasBull, cbcState, High[1], Low[1], Values[1][0],
+                                            BrsgLowMult, BrsgHighMult, out z))
+            {
+                ClearOptionZones();
+                return;
+            }
+
+            double[] lo = { z.Lo1, z.Lo2, z.Lo3 };
+            double[] hi = { z.Hi1, z.Hi2, z.Hi3 };
+            bool[] isLong = { z.Long1, z.Long2, z.Long3 };
+            string[] text = !biasBull
+                ? new string[] { "1 BRSG LONG", "2 EMA20 SHORT (small)", "3 SGCR SHORT on flip" }
+                : new string[] { "1 SGCR SHORT", "2 EMA20 LONG (small)", "3 BRSG LONG on flip" };
+
+            int opacity = Math.Max(0, Math.Min(100, OptionZoneOpacity));
+            SimpleFont zoneFont = new SimpleFont("Arial", 10);
+
+            for (int i = 0; i < 3; i++)
+            {
+                Brush b = isLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
+                Draw.Rectangle(this, optionZoneTags[i], false, 1, lo[i], 0, hi[i], b, b, opacity);
+
+                if (ShowOptionZoneLabels)
+                    Draw.Text(this, optionZoneLabelTags[i], false, text[i],
+                              1, hi[i], 8,
+                              b, zoneFont, TextAlignment.Left,
+                              Brushes.Transparent, Brushes.Transparent, 0);
+                else
+                    RemoveDrawObject(optionZoneLabelTags[i]);
             }
         }
 
