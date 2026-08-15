@@ -107,26 +107,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool ShowOptionZones { get; set; } = false;
 
         [NinjaScriptProperty]
-        [Display(Name = "Bias source", GroupName = "Option zones", Order = 2, Description = "Which higher-timeframe read is the bias: the HTF CBC state, or the HTF EMA cloud (HTF fast EMA vs HTF slow EMA).")]
+        [Display(Name = "Preview", GroupName = "Option zones", Order = 2, Description = "REVIEW AID, NOT A SIGNAL. Forces a bias opposite the LTF CBC so the three zones always draw, and skips the higher-timeframe warm-up, which lets you see them on a closed market or outside trading hours. Prices, the prior bar's range and the 20 EMA are all real; only the bias is invented. Labels are suffixed PREVIEW while this is on. Turn it off to trade.")]
+        public bool PreviewOptionZones { get; set; } = false;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Bias source", GroupName = "Option zones", Order = 3, Description = "Which higher-timeframe read is the bias: the HTF CBC state, or the HTF EMA cloud (HTF fast EMA vs HTF slow EMA). Ignored while Preview is on.")]
         public MapleStaxOptionBias OptionZoneBias { get; set; } = MapleStaxOptionBias.HtfCbc;
 
         [NinjaScriptProperty]
-        [Display(Name = "Labels", GroupName = "Option zones", Order = 3)]
+        [Display(Name = "Labels", GroupName = "Option zones", Order = 4)]
         public bool ShowOptionZoneLabels { get; set; } = true;
 
         [NinjaScriptProperty]
-        [Display(Name = "Opacity", GroupName = "Option zones", Order = 4, Description = "Fill opacity of the three zones, 0 to 100.")]
+        [Display(Name = "Opacity", GroupName = "Option zones", Order = 5, Description = "Fill opacity of the three zones, 0 to 100.")]
         public int OptionZoneOpacity { get; set; } = 20;
 
         [XmlIgnore]
-        [Display(Name = "Long color", GroupName = "Option zones", Order = 5)]
+        [Display(Name = "Long color", GroupName = "Option zones", Order = 6)]
         public Brush OptionZoneLongColor { get; set; } = Brushes.MediumSeaGreen;
 
         [Browsable(false)]
         public string OptionZoneLongColorSerializable { get { return Serialize.BrushToString(OptionZoneLongColor); } set { OptionZoneLongColor = Serialize.StringToBrush(value); } }
 
         [XmlIgnore]
-        [Display(Name = "Short color", GroupName = "Option zones", Order = 6)]
+        [Display(Name = "Short color", GroupName = "Option zones", Order = 7)]
         public Brush OptionZoneShortColor { get; set; } = Brushes.IndianRed;
 
         [Browsable(false)]
@@ -1456,6 +1460,22 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
         // </OptionZoneGeometry>
 
+        // How far past the last bar each zone runs. A zone is a price band you are waiting
+        // for, so it has to read forward; anchored 1 -> 0 it rendered as a two-bar sliver at
+        // the hard right edge, easy to look straight through on a chart already carrying
+        // BRSG, flip lines, ORB regions and the status panel.
+        //
+        // Projected by TIME, not by negative barsAgo. Draw.Line ships a -1 for LTF pivots so
+        // one bar of negative barsAgo is known good, but nothing in this install draws
+        // further than that, and an out-of-range anchor throws inside OnBarUpdate, which
+        // takes the whole indicator down for that chart. DrawHtfPivotLines already extends
+        // past the last bar with Time[0].Add(BarsPeriodToTimeSpan(BarsPeriod)); this is that
+        // same proven call, several periods wide. Inherits that helper's one weakness: on
+        // tick/range/volume bars BarsPeriodToTimeSpan falls back to treating Value as
+        // minutes, so the band over-extends to the right there. Harmless, and this indicator
+        // runs on time bars.
+        private const int optionZoneExtendBars = 5;
+
         // Fixed tags, so each call replaces the previous zone in place. Nothing here is
         // dated, so CleanupOldDrawings' prefix sweep never touches these.
         private static readonly string[] optionZoneTags = { "MSOptZone1", "MSOptZone2", "MSOptZone3" };
@@ -1481,19 +1501,42 @@ namespace NinjaTrader.NinjaScript.Indicators
         // When the two reads agree there is one trade, not three, so nothing is drawn.
         private void UpdateOptionZones()
         {
-            // Warm-up: until the HTF series has closed a bar there is no bias. previousHtfCbc
-            // seeds bearish and actualHtfEmaBullish seeds bullish, so without this guard the
-            // opening bars would draw zones off a bias nothing has measured yet.
-            if (!ShowOptionZones || !HtfEnabled || CurrentBar < 1
-                || !htfDataSeriesAdded || htfSeriesIndex < 0 || CurrentBars[htfSeriesIndex] < 2)
+            if (!ShowOptionZones || CurrentBar < 1)
             {
                 ClearOptionZones();
                 return;
             }
 
-            bool biasBull = OptionZoneBias == MapleStaxOptionBias.HtfEmaCloud
-                ? actualHtfEmaBullish
-                : previousHtfCbc;
+            bool biasBull;
+            if (PreviewOptionZones)
+            {
+                // Review aid. The zones only exist while the two reads disagree, which on a
+                // closed market at the last printed bar is a coin flip, so there is nothing
+                // to look at exactly when there is time to look. Inverting the LTF CBC makes
+                // the disagreement certain (see the preview invariant in OptionZoneTests),
+                // and skipping the warm-up gate below lets it draw before the HTF series has
+                // closed two bars. Only the bias is synthetic: the rectangles are computed
+                // from this chart's real prior-bar range and real 20 EMA, so what you judge
+                // for size, placement and legibility is what ships. Labels carry PREVIEW so
+                // a forced draw cannot be read as a live setup.
+                biasBull = !cbcState;
+            }
+            else
+            {
+                // Warm-up: until the HTF series has closed a bar there is no bias. previousHtfCbc
+                // seeds bearish and actualHtfEmaBullish seeds bullish, so without this guard the
+                // opening bars would draw zones off a bias nothing has measured yet.
+                if (!HtfEnabled || !htfDataSeriesAdded || htfSeriesIndex < 0
+                    || CurrentBars[htfSeriesIndex] < 2)
+                {
+                    ClearOptionZones();
+                    return;
+                }
+
+                biasBull = OptionZoneBias == MapleStaxOptionBias.HtfEmaCloud
+                    ? actualHtfEmaBullish
+                    : previousHtfCbc;
+            }
 
             OptionZoneGeometry.Zones z;
             if (!OptionZoneGeometry.Compute(biasBull, cbcState, High[1], Low[1], Values[1][0],
@@ -1510,13 +1553,22 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ? new string[] { "1 BRSG LONG", "2 EMA20 SHORT (small)", "3 SGCR SHORT on flip" }
                 : new string[] { "1 SGCR SHORT", "2 EMA20 LONG (small)", "3 BRSG LONG on flip" };
 
+            if (PreviewOptionZones)
+                for (int i = 0; i < text.Length; i++)
+                    text[i] += "  (PREVIEW)";
+
             int opacity = Math.Max(0, Math.Min(100, OptionZoneOpacity));
             SimpleFont zoneFont = new SimpleFont("Arial", 10);
+
+            DateTime zoneLeft = Time[1];
+            DateTime zoneRight = Time[0].Add(TimeSpan.FromTicks(
+                BarsPeriodToTimeSpan(BarsPeriod).Ticks * optionZoneExtendBars));
 
             for (int i = 0; i < 3; i++)
             {
                 Brush b = isLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
-                Draw.Rectangle(this, optionZoneTags[i], false, 1, lo[i], 0, hi[i], b, b, opacity);
+                Draw.Rectangle(this, optionZoneTags[i], false,
+                               zoneLeft, lo[i], zoneRight, hi[i], b, b, opacity);
 
                 if (ShowOptionZoneLabels)
                     Draw.Text(this, optionZoneLabelTags[i], false, text[i],

@@ -28,6 +28,7 @@ Every one of those mirrors when the bias is bullish and the CBC has flipped shor
 When the two reads **agree** there is only one trade, not three, so nothing is drawn. The existing BRSG zone and CBC flip lines already cover that case.
 
 - **Bias source** picks which higher-timeframe read is the bias: the HTF CBC state, or the HTF EMA cloud (HTF fast EMA against HTF slow EMA).
+- **Preview** is a review aid, not a signal. Because the zones only exist while the two reads disagree, a closed market at the last printed bar shows nothing roughly half the time, which is exactly when there is time to look at them. Preview forces a bias opposite the LTF CBC so all three always draw, and skips the higher-timeframe warm-up. Only the bias is invented: the rectangles come from this chart's real prior-bar range and real 20 EMA, so size, placement and legibility are what ships. Labels are suffixed `(PREVIEW)` while it is on. Turn it off to trade.
 - At the default 0.45 / 0.55 multipliers the BRSG and SGCR *entry* bands are the same span, measured from opposite ends of the prior bar. That is expected, and it is why zone 3 is a trigger rather than an entry band: otherwise two of the three zones would land on one rectangle.
 - The geometry is covered by `tools/run-zone-tests.ps1`, which extracts the shipping code out of `MapleStaxCBC.cs` and asserts against it, so the tests cannot drift from the indicator.
 
@@ -107,7 +108,7 @@ The properties panel groups settings as follows (alphabetical in NinjaTrader's U
 - **HTF Signals** — HTF timeframe selector, EMA cloud toggle, LONG/SHORT label settings, HTF pivot settings.
 - **LTF Signals** — FOBO toggle, EMA20 touch dots, VWAP toggle, BRSG zone, LTF pivot settings.
 - **Opening Range (Sessions)** — Per-session toggles (NY/London/Asian), OR length in minutes.
-- **Option zones** - Show toggle, bias source (HTF CBC or HTF EMA cloud), labels toggle, fill opacity, long/short colors.
+- **Option zones** - Show toggle, preview toggle, bias source (HTF CBC or HTF EMA cloud), labels toggle, fill opacity, long/short colors.
 - **Reference levels** — PDH, PDL, PMH, PML toggles plus per-level color/width/style. Show level name / show level price toggles.
 - **Status table** — Show toggle, position, text size, per-row backgrounds, text colors.
 - **Time zone** — Chart TZ override (described above).

@@ -97,6 +97,25 @@ internal static class OptionZoneTests
         OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, out z);
         Check(z.Hi1 > z.Lo1 && z.Hi2 > z.Lo2 && z.Hi3 > z.Lo3, "all three zones have positive height");
 
+        // The precondition Preview mode stands on. Preview draws by handing Compute a bias
+        // that is the opposite of the LTF CBC, so disagreement must be SUFFICIENT on its own:
+        // given a real prior bar and a formed EMA, an opposed bias always yields three zones.
+        // If a future gate makes Compute reject some opposed cases, Preview silently stops
+        // drawing on those charts and this assertion is what catches it.
+        bool previewAlwaysDraws = true;
+        foreach (bool ltfBull in new[] { true, false })
+            foreach (double ema in new[] { 21500.0, 21530.0, 21560.0 })
+                foreach (double high in new[] { 21540.0, 21600.0 })
+                    foreach (double lo in new[] { 0.45, 0.20, 0.0 })
+                    {
+                        OptionZoneGeometry.Zones pz;
+                        // Preview's rule verbatim: biasBull = !ltfBull.
+                        if (!OptionZoneGeometry.Compute(!ltfBull, ltfBull, high, PrevLow, ema, lo, HighMult, out pz)
+                            || !(pz.Hi1 > pz.Lo1 && pz.Hi2 > pz.Lo2 && pz.Hi3 > pz.Lo3))
+                            previewAlwaysDraws = false;
+                    }
+        Check(previewAlwaysDraws, "preview invariant: an opposed bias always draws three real zones");
+
         Console.WriteLine(failures == 0 ? "ALL PASS" : (failures + " FAILURE(S)"));
         return failures == 0 ? 0 : 1;
     }
