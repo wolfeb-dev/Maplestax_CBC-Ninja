@@ -155,6 +155,45 @@ internal static class OptionZoneTests
                         }
         Check(previewAlwaysDraws, "preview invariant: an opposed bias always draws three real zones");
 
+        // ---- Close-through, the rule that truncates a zone ----------------------------
+        // A zone dies when a bar CLOSES on the far side of it: below a zone you would be
+        // buying into, above one you would be selling into. Wicks through do not count,
+        // which is the whole point of testing the close.
+        const double zLo = 21528.0, zHi = 21532.0;
+
+        Check(OptionZoneGeometry.ClosedThrough(true, zLo, zHi, 21527.75),
+              "long zone: close below the low is closed through");
+        Check(!OptionZoneGeometry.ClosedThrough(true, zLo, zHi, zLo),
+              "long zone: close exactly on the low still holds");
+        Check(!OptionZoneGeometry.ClosedThrough(true, zLo, zHi, 21530.0),
+              "long zone: close inside holds");
+        Check(!OptionZoneGeometry.ClosedThrough(true, zLo, zHi, 21600.0),
+              "long zone: close far above holds (that is the trade working)");
+
+        Check(OptionZoneGeometry.ClosedThrough(false, zLo, zHi, 21532.25),
+              "short zone: close above the high is closed through");
+        Check(!OptionZoneGeometry.ClosedThrough(false, zLo, zHi, zHi),
+              "short zone: close exactly on the high still holds");
+        Check(!OptionZoneGeometry.ClosedThrough(false, zLo, zHi, 21530.0),
+              "short zone: close inside holds");
+        Check(!OptionZoneGeometry.ClosedThrough(false, zLo, zHi, 21400.0),
+              "short zone: close far below holds (that is the trade working)");
+
+        // The two directions must be genuine mirrors, not one rule with a sign bug: a close
+        // that kills the long zone must leave the short zone alone, and vice versa.
+        Check(OptionZoneGeometry.ClosedThrough(true, zLo, zHi, 21500.0)
+              && !OptionZoneGeometry.ClosedThrough(false, zLo, zHi, 21500.0),
+              "mirror: a close below kills long only");
+        Check(OptionZoneGeometry.ClosedThrough(false, zLo, zHi, 21560.0)
+              && !OptionZoneGeometry.ClosedThrough(true, zLo, zHi, 21560.0),
+              "mirror: a close above kills short only");
+
+        // A NaN close must never be read as an invalidation.
+        Check(!OptionZoneGeometry.ClosedThrough(true, zLo, zHi, double.NaN),
+              "NaN close does not close through a long zone");
+        Check(!OptionZoneGeometry.ClosedThrough(false, zLo, zHi, double.NaN),
+              "NaN close does not close through a short zone");
+
         Console.WriteLine(failures == 0 ? "ALL PASS" : (failures + " FAILURE(S)"));
         return failures == 0 ? 0 : 1;
     }

@@ -1,5 +1,6 @@
 #region Using declarations
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
@@ -123,22 +124,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int OptionZoneAtrPeriod { get; set; } = 14;
 
         [NinjaScriptProperty]
-        [Display(Name = "Labels", GroupName = "Option zones", Order = 6)]
+        [Display(Name = "Cutoff hour (ET)", GroupName = "Option zones", Order = 6, Description = "Zones stop at the first bar on or after this ET hour following the bar they were drawn on. 12 ends them at noon ET. Set 0 to let them run until price closes through them.")]
+        public int OptionZoneCutoffHourEt { get; set; } = 12;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Examples kept per side", GroupName = "Option zones", Order = 7, Description = "How many finished episodes to leave on the chart for each bias side, drawn at half opacity and truncated where they died. 3 keeps three bullish-bias and three bearish-bias worked examples. Set 0 to show only the live one.")]
+        public int OptionZoneHistoryPerSide { get; set; } = 3;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Labels", GroupName = "Option zones", Order = 8)]
         public bool ShowOptionZoneLabels { get; set; } = true;
 
         [NinjaScriptProperty]
-        [Display(Name = "Opacity", GroupName = "Option zones", Order = 7, Description = "Fill opacity of the three zones, 0 to 100.")]
+        [Display(Name = "Opacity", GroupName = "Option zones", Order = 9, Description = "Fill opacity of the three zones, 0 to 100.")]
         public int OptionZoneOpacity { get; set; } = 20;
 
         [XmlIgnore]
-        [Display(Name = "Long color", GroupName = "Option zones", Order = 8)]
+        [Display(Name = "Long color", GroupName = "Option zones", Order = 10)]
         public Brush OptionZoneLongColor { get; set; } = Brushes.MediumSeaGreen;
 
         [Browsable(false)]
         public string OptionZoneLongColorSerializable { get { return Serialize.BrushToString(OptionZoneLongColor); } set { OptionZoneLongColor = Serialize.StringToBrush(value); } }
 
         [XmlIgnore]
-        [Display(Name = "Short color", GroupName = "Option zones", Order = 9)]
+        [Display(Name = "Short color", GroupName = "Option zones", Order = 11)]
         public Brush OptionZoneShortColor { get; set; } = Brushes.IndianRed;
 
         [Browsable(false)]
@@ -1500,6 +1509,21 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 return true;
             }
+
+            // Has price CLOSED through this zone, killing it? A zone you would be buying into
+            // dies on a close below its low; one you would be selling into dies on a close
+            // above its high. Deliberately the close and not the high/low of the bar: a wick
+            // through a zone is the zone doing its job, and truncating on wicks would erase
+            // every zone that ever worked. A close beyond the zone in the direction the trade
+            // wanted is not an invalidation either - that is the trade paying - so only the
+            // one side counts.
+            internal static bool ClosedThrough(bool isLong, double lo, double hi, double close)
+            {
+                if (double.IsNaN(close))
+                    return false;
+
+                return isLong ? close < lo : close > hi;
+            }
         }
         // </OptionZoneGeometry>
 
@@ -1511,25 +1535,79 @@ namespace NinjaTrader.NinjaScript.Indicators
         // indicator's own Draw.* output, which is the right layer for a translucent band
         // sitting behind the flip lines and BRSG; and they are no longer selectable or
         // listed under Drawing Objects, same as OrderFlowZones.
-        private bool optionZonesActive;
-        private readonly double[] optionZoneLo = new double[3];
-        private readonly double[] optionZoneHi = new double[3];
-        private readonly bool[] optionZoneLong = new bool[3];
-        private readonly string[] optionZoneText = new string[3];
+        // One mixed-signal episode: the three zones as they stood at the bar the disagreement
+        // appeared, and how far right each of them is still valid.
+        //
+        // GEOMETRY IS FROZEN AT THE START BAR and never recomputed. That is not an
+        // optimisation, it is what makes the display mean anything. A band drawn from the
+        // start bar to now while its prices track the latest bar asserts that those levels
+        // held for the whole span, which is false; and a level that moves every bar cannot be
+        // "closed through" at all, so truncation would be meaningless. The three options are
+        // decided at the moment the signals disagree, so that is when the prices are fixed.
+        private sealed class OptionZoneEpisode
+        {
+            public int StartBar;
+            public int EndBar = -1;                  // -1 while live
+            public bool BiasBull;
+            public DateTime CutoffEt = DateTime.MaxValue;
+            public readonly double[] Lo = new double[3];
+            public readonly double[] Hi = new double[3];
+            public readonly bool[] IsLong = new bool[3];
+            public readonly string[] Text = new string[3];
+            public readonly int[] ClosedBar = { -1, -1, -1 };   // per zone, -1 = still valid
+        }
 
-        // Absolute bar index where the current mixed-signal episode began, so the band spans
-        // the disagreement rather than starting at the last bar (which would be a sliver
-        // again). Resets whenever the episode ends or the bias side changes.
-        private int optionZoneStartBar = -1;
+        private readonly List<OptionZoneEpisode> optionZoneHistory = new List<OptionZoneEpisode>();
+        private OptionZoneEpisode optionZoneLive;
+
+        // True when the next mixed signal is entitled to a new episode. Cleared on open, so an
+        // episode that died on its own terms (all three zones closed through, or the cutoff)
+        // does NOT immediately reopen on the same standing signal.
+        private bool optionZoneArmed = true;
+
+        // Which side the disagreement was on last bar, tracked SEPARATELY from the live
+        // episode. It has to be: an episode that already retired leaves optionZoneLive null,
+        // and if the side-change test hung off the live episode a bias that flipped straight
+        // from one side to the other would never re-arm - zones would stop appearing for good.
+        // Preview takes that path routinely, because its forced disagreement means Compute
+        // never fails and agreement never re-arms anything.
         private bool optionZoneLastBiasBull;
+        private bool optionZoneHadMixed;
 
         private ATR optionZoneAtrIndicator;
         private double optionZoneAtr = double.NaN;
 
         private void ClearOptionZones()
         {
-            optionZonesActive = false;
-            optionZoneStartBar = -1;
+            optionZoneLive = null;
+            optionZoneHistory.Clear();
+            optionZoneArmed = true;
+            optionZoneHadMixed = false;
+        }
+
+        // Close the live episode at endBar and file it as an example.
+        private void RetireOptionZoneEpisode(int endBar)
+        {
+            if (optionZoneLive == null) return;
+
+            optionZoneLive.EndBar = endBar;
+            optionZoneHistory.Add(optionZoneLive);
+            optionZoneLive = null;
+
+            // Keep the last N per side, so the chart carries a comparable set of bullish-bias
+            // and bearish-bias examples rather than whichever side happened to fire recently.
+            int keep = Math.Max(0, OptionZoneHistoryPerSide);
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool side = pass == 0;
+                int seen = 0;
+                for (int i = optionZoneHistory.Count - 1; i >= 0; i--)
+                {
+                    if (optionZoneHistory[i].BiasBull != side) continue;
+                    seen++;
+                    if (seen > keep) optionZoneHistory.RemoveAt(i);
+                }
+            }
         }
 
         // Maple's three trading options, drawn at price.
@@ -1554,6 +1632,28 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (optionZoneAtrIndicator != null && CurrentBar >= OptionZoneAtrPeriod)
                 optionZoneAtr = optionZoneAtrIndicator[0];
 
+            // Age the live episode before anything else. Each zone truncates on the bar that
+            // closes through it; the episode as a whole ends once all three are gone or the
+            // cutoff passes. Neither re-arms: a standing disagreement does not get a fresh set
+            // of zones just because the last set was invalidated.
+            if (optionZoneLive != null)
+            {
+                bool allClosed = true;
+                for (int i = 0; i < 3; i++)
+                {
+                    if (optionZoneLive.ClosedBar[i] < 0
+                        && OptionZoneGeometry.ClosedThrough(optionZoneLive.IsLong[i],
+                                                            optionZoneLive.Lo[i],
+                                                            optionZoneLive.Hi[i], Close[0]))
+                        optionZoneLive.ClosedBar[i] = CurrentBar;
+
+                    if (optionZoneLive.ClosedBar[i] < 0) allClosed = false;
+                }
+
+                if (allClosed || ConvertToEastern(Time[0]) >= optionZoneLive.CutoffEt)
+                    RetireOptionZoneEpisode(CurrentBar);
+            }
+
             bool biasBull;
             if (PreviewOptionZones)
             {
@@ -1576,7 +1676,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!HtfEnabled || !htfDataSeriesAdded || htfSeriesIndex < 0
                     || CurrentBars[htfSeriesIndex] < 2)
                 {
-                    ClearOptionZones();
+                    RetireOptionZoneEpisode(CurrentBar);
+                    optionZoneArmed = true;
+                    optionZoneHadMixed = false;
                     return;
                 }
 
@@ -1592,29 +1694,53 @@ namespace NinjaTrader.NinjaScript.Indicators
                                             BrsgLowMult, BrsgHighMult,
                                             optionZoneAtr, OptionZoneAtrMult, out z))
             {
-                ClearOptionZones();
+                // The reads agree again (or the bar is degenerate): the episode is over and
+                // the next disagreement is entitled to a fresh set of zones.
+                RetireOptionZoneEpisode(CurrentBar);
+                optionZoneArmed = true;
+                optionZoneHadMixed = false;
                 return;
             }
 
-            // A new episode starts when the disagreement begins, or when it switches sides.
-            // Everything after that keeps the same left edge, so the band grows to show how
-            // long the mixed signal has stood.
-            if (!optionZonesActive || optionZoneLastBiasBull != biasBull || optionZoneStartBar < 0)
-                optionZoneStartBar = CurrentBar;
+            // The bias switching sides is a different setup, not a continuation.
+            if (optionZoneHadMixed && optionZoneLastBiasBull != biasBull)
+            {
+                RetireOptionZoneEpisode(CurrentBar);
+                optionZoneArmed = true;
+            }
             optionZoneLastBiasBull = biasBull;
+            optionZoneHadMixed = true;
 
-            optionZoneLo[0] = z.Lo1; optionZoneHi[0] = z.Hi1; optionZoneLong[0] = z.Long1;
-            optionZoneLo[1] = z.Lo2; optionZoneHi[1] = z.Hi2; optionZoneLong[1] = z.Long2;
-            optionZoneLo[2] = z.Lo3; optionZoneHi[2] = z.Hi3; optionZoneLong[2] = z.Long3;
+            if (optionZoneLive != null || !optionZoneArmed)
+                return;   // live episode continues, frozen where it was drawn
+
+            var ep = new OptionZoneEpisode { StartBar = CurrentBar, BiasBull = biasBull };
+            ep.Lo[0] = z.Lo1; ep.Hi[0] = z.Hi1; ep.IsLong[0] = z.Long1;
+            ep.Lo[1] = z.Lo2; ep.Hi[1] = z.Hi2; ep.IsLong[1] = z.Long2;
+            ep.Lo[2] = z.Lo3; ep.Hi[2] = z.Hi3; ep.IsLong[2] = z.Long3;
 
             string[] text = !biasBull
                 ? new string[] { "1 BRSG LONG", "2 EMA20 SHORT (small)", "3 SGCR SHORT on flip" }
                 : new string[] { "1 SGCR SHORT", "2 EMA20 LONG (small)", "3 BRSG LONG on flip" };
-
             for (int i = 0; i < 3; i++)
-                optionZoneText[i] = PreviewOptionZones ? text[i] + "  (PREVIEW)" : text[i];
+                ep.Text[i] = PreviewOptionZones ? text[i] + "  (PREVIEW)" : text[i];
 
-            optionZonesActive = true;
+            // The cutoff is the next crossing of the ET hour AFTER this episode opened, not
+            // "any bar past noon". Pinning it to the clock alone would mean an episode that
+            // opens in the afternoon or overnight is born already expired, and nothing would
+            // ever draw outside the morning - including during an out-of-hours review.
+            ep.CutoffEt = DateTime.MaxValue;
+            if (OptionZoneCutoffHourEt >= 1 && OptionZoneCutoffHourEt <= 23)
+            {
+                DateTime startEt = ConvertToEastern(Time[0]);
+                DateTime cutoff = new DateTime(startEt.Year, startEt.Month, startEt.Day,
+                                               OptionZoneCutoffHourEt, 0, 0);
+                if (cutoff <= startEt) cutoff = cutoff.AddDays(1);
+                ep.CutoffEt = cutoff;
+            }
+
+            optionZoneLive = ep;
+            optionZoneArmed = false;
         }
 
         // Paint the three zones, in the same visual language OrderFlowZones uses for its OB
@@ -1626,80 +1752,113 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void RenderOptionZones(NinjaTrader.Gui.Chart.ChartControl chartControl,
                                        NinjaTrader.Gui.Chart.ChartScale chartScale)
         {
-            if (!optionZonesActive || chartControl == null || chartScale == null) return;
-            if (ChartBars == null || optionZoneStartBar < 0) return;
-
-            float panelRight = (float)(chartScale.ChartPanel.X + chartScale.ChartPanel.W);
-            float xRight = panelRight - 2f;
-            float xLeft = GetXForBar(chartControl, optionZoneStartBar);
-            if (xLeft > xRight) xLeft = xRight - 4f;
-            float zoneW = xRight - xLeft;
-            if (zoneW < 1f) return;
-
-            float fillOpacity = Math.Max(0, Math.Min(100, OptionZoneOpacity)) / 100f;
-            const float textPx = 11f;
-            const float interiorPad = 3f;
+            if (chartControl == null || chartScale == null || ChartBars == null) return;
+            if (optionZoneLive == null && optionZoneHistory.Count == 0) return;
 
             SharpDX.DirectWrite.TextFormat zoneFmt = null;
             try
             {
                 if (ShowOptionZoneLabels)
                     zoneFmt = new SharpDX.DirectWrite.TextFormat(
-                        NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textPx)
+                        NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", optionZoneTextPx)
                     { TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading };
 
-                for (int i = 0; i < 3; i++)
-                {
-                    Brush baseBrush = optionZoneLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
-                    SharpDX.Color4 baseColor = ToD2DColor(baseBrush);
-                    float alpha = fillOpacity * baseColor.Alpha;
-                    if (alpha < 0.001f) continue;
+                // Retired episodes first, so the live one paints over them where they overlap.
+                for (int e = 0; e < optionZoneHistory.Count; e++)
+                    RenderOptionZoneEpisode(optionZoneHistory[e], chartControl, chartScale, zoneFmt);
 
-                    float yTop = (float)chartScale.GetYByValue(optionZoneHi[i]);
-                    float yBot = (float)chartScale.GetYByValue(optionZoneLo[i]);
-                    if (yTop > yBot) { float tmp = yTop; yTop = yBot; yBot = tmp; }
-                    float zoneH = yBot - yTop;
-                    if (zoneH < 1f) zoneH = 1f;
-
-                    var rect = new SharpDX.RectangleF(xLeft, yTop, zoneW, zoneH);
-
-                    using (var fill = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
-                               new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue, alpha)))
-                        RenderTarget.FillRectangle(rect, fill);
-
-                    // The lighter strip sits on the side price has to come from: along the
-                    // bottom of a zone you are buying into, the top of one you are selling
-                    // into. Same trick and same numbers as OrderFlowZones.
-                    float stripH = Math.Min(zoneH * 0.35f, 6f);
-                    float stripY = optionZoneLong[i] ? yBot - stripH : yTop;
-                    var stripColor = new SharpDX.Color4(
-                        Math.Min(baseColor.Red + 0.15f, 1f),
-                        Math.Min(baseColor.Green + 0.15f, 1f),
-                        Math.Min(baseColor.Blue + 0.15f, 1f),
-                        alpha * 0.5f);
-                    using (var strip = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, stripColor))
-                        RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, stripY, zoneW, stripH), strip);
-
-                    using (var border = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
-                               new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue,
-                                                  Math.Min(alpha * 2.5f, 0.9f))))
-                        RenderTarget.DrawRectangle(rect, border, 1f);
-
-                    if (zoneFmt == null) continue;
-
-                    float lblY = optionZoneLong[i]
-                        ? yTop + interiorPad
-                        : yBot - textPx - interiorPad;
-                    float lblW = Math.Max(zoneW - interiorPad * 2f, 20f);
-                    var lblRect = new SharpDX.RectangleF(xLeft + interiorPad, lblY, lblW, textPx + 2f);
-                    using (var txt = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
-                               new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue, 1f)))
-                        RenderTarget.DrawText(optionZoneText[i] ?? string.Empty, zoneFmt, lblRect, txt);
-                }
+                if (optionZoneLive != null)
+                    RenderOptionZoneEpisode(optionZoneLive, chartControl, chartScale, zoneFmt);
             }
             finally
             {
                 if (zoneFmt != null) zoneFmt.Dispose();
+            }
+        }
+
+        private const float optionZoneTextPx = 11f;
+
+        private void RenderOptionZoneEpisode(OptionZoneEpisode ep,
+                                             NinjaTrader.Gui.Chart.ChartControl chartControl,
+                                             NinjaTrader.Gui.Chart.ChartScale chartScale,
+                                             SharpDX.DirectWrite.TextFormat zoneFmt)
+        {
+            const float interiorPad = 3f;
+
+            float panelRight = (float)(chartScale.ChartPanel.X + chartScale.ChartPanel.W);
+            float xLeft = GetXForBar(chartControl, ep.StartBar);
+
+            // Where the episode as a whole stops: the right edge while it is live, otherwise
+            // the bar it was retired on.
+            float xEpisodeEnd = ep.EndBar >= 0 ? GetXForBar(chartControl, ep.EndBar) : panelRight - 2f;
+            if (xEpisodeEnd > panelRight - 2f) xEpisodeEnd = panelRight - 2f;
+
+            float fillOpacity = Math.Max(0, Math.Min(100, OptionZoneOpacity)) / 100f;
+
+            for (int i = 0; i < 3; i++)
+            {
+                // Each zone truncates on its own bar. A zone that was closed through stops
+                // there even if the other two carried the episode on.
+                float xRight = ep.ClosedBar[i] >= 0
+                    ? Math.Min(xEpisodeEnd, GetXForBar(chartControl, ep.ClosedBar[i]))
+                    : xEpisodeEnd;
+                if (xLeft >= xRight) continue;
+                float zoneW = xRight - xLeft;
+                if (zoneW < 1f) continue;
+
+                bool spent = ep.EndBar >= 0 || ep.ClosedBar[i] >= 0;
+
+                Brush baseBrush = ep.IsLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
+                SharpDX.Color4 baseColor = ToD2DColor(baseBrush);
+                float alpha = fillOpacity * baseColor.Alpha * (spent ? 0.5f : 1f);
+                if (alpha < 0.001f) continue;
+
+                float yTop = (float)chartScale.GetYByValue(ep.Hi[i]);
+                float yBot = (float)chartScale.GetYByValue(ep.Lo[i]);
+                if (yTop > yBot) { float tmp = yTop; yTop = yBot; yBot = tmp; }
+                float zoneH = yBot - yTop;
+                if (zoneH < 1f) zoneH = 1f;
+
+                var rect = new SharpDX.RectangleF(xLeft, yTop, zoneW, zoneH);
+
+                using (var fill = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
+                           new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue, alpha)))
+                    RenderTarget.FillRectangle(rect, fill);
+
+                // The lighter strip sits on the side price has to come from: along the
+                // bottom of a zone you are buying into, the top of one you are selling
+                // into. Same trick and same numbers as OrderFlowZones.
+                float stripH = Math.Min(zoneH * 0.35f, 6f);
+                float stripY = ep.IsLong[i] ? yBot - stripH : yTop;
+                var stripColor = new SharpDX.Color4(
+                    Math.Min(baseColor.Red + 0.15f, 1f),
+                    Math.Min(baseColor.Green + 0.15f, 1f),
+                    Math.Min(baseColor.Blue + 0.15f, 1f),
+                    alpha * 0.5f);
+                using (var strip = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, stripColor))
+                    RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, stripY, zoneW, stripH), strip);
+
+                using (var border = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
+                           new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue,
+                                              Math.Min(alpha * 2.5f, 0.9f))))
+                    RenderTarget.DrawRectangle(rect, border, 1f);
+
+                if (zoneFmt == null) continue;
+
+                // Full text on the live episode. Retired examples carry the zone number only:
+                // six worked examples at three lines each is eighteen strings of chart noise,
+                // and the number plus the colour already says which option it was.
+                string label = ep.EndBar >= 0
+                    ? (string.IsNullOrEmpty(ep.Text[i]) ? string.Empty : ep.Text[i].Substring(0, 1))
+                    : (ep.Text[i] ?? string.Empty);
+
+                float lblY = ep.IsLong[i] ? yTop + interiorPad : yBot - optionZoneTextPx - interiorPad;
+                float lblW = Math.Max(zoneW - interiorPad * 2f, 20f);
+                var lblRect = new SharpDX.RectangleF(xLeft + interiorPad, lblY, lblW, optionZoneTextPx + 2f);
+                using (var txt = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
+                           new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue,
+                                              spent ? 0.75f : 1f)))
+                    RenderTarget.DrawText(label, zoneFmt, lblRect, txt);
             }
         }
 
