@@ -115,22 +115,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         public MapleStaxOptionBias OptionZoneBias { get; set; } = MapleStaxOptionBias.HtfCbc;
 
         [NinjaScriptProperty]
-        [Display(Name = "Labels", GroupName = "Option zones", Order = 4)]
+        [Display(Name = "Width (x ATR)", GroupName = "Option zones", Order = 4, Description = "Height of each zone as a multiple of ATR. All three zones share this thickness. Capped so zone 1 can never spill across the flip level zone 3 marks.")]
+        public double OptionZoneAtrMult { get; set; } = 0.5;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Width ATR period", GroupName = "Option zones", Order = 5, Description = "ATR period behind the zone thickness.")]
+        public int OptionZoneAtrPeriod { get; set; } = 14;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Labels", GroupName = "Option zones", Order = 6)]
         public bool ShowOptionZoneLabels { get; set; } = true;
 
         [NinjaScriptProperty]
-        [Display(Name = "Opacity", GroupName = "Option zones", Order = 5, Description = "Fill opacity of the three zones, 0 to 100.")]
+        [Display(Name = "Opacity", GroupName = "Option zones", Order = 7, Description = "Fill opacity of the three zones, 0 to 100.")]
         public int OptionZoneOpacity { get; set; } = 20;
 
         [XmlIgnore]
-        [Display(Name = "Long color", GroupName = "Option zones", Order = 6)]
+        [Display(Name = "Long color", GroupName = "Option zones", Order = 8)]
         public Brush OptionZoneLongColor { get; set; } = Brushes.MediumSeaGreen;
 
         [Browsable(false)]
         public string OptionZoneLongColorSerializable { get { return Serialize.BrushToString(OptionZoneLongColor); } set { OptionZoneLongColor = Serialize.StringToBrush(value); } }
 
         [XmlIgnore]
-        [Display(Name = "Short color", GroupName = "Option zones", Order = 7)]
+        [Display(Name = "Short color", GroupName = "Option zones", Order = 9)]
         public Brush OptionZoneShortColor { get; set; } = Brushes.IndianRed;
 
         [Browsable(false)]
@@ -732,6 +740,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // throws on every redraw once the region reaches past that. This
                 // mirrors NinjaTrader's own @ZigZag.cs, which passes Infinite to its
                 // self-constructed series and never sets the indicator-level property.
+                // Zone thickness. Built here rather than read on demand because a child
+                // indicator has to be constructed in DataLoaded, and only when the zones are
+                // switched on: this indicator runs twelve up on the MTF workspace and most of
+                // those instances never draw a zone. Changing any property reloads the whole
+                // indicator, so switching Show on later still gets an ATR.
+                if (ShowOptionZones)
+                    optionZoneAtrIndicator = ATR(Math.Max(1, OptionZoneAtrPeriod));
+
                 orHighNySeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
                 orLowNySeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
                 orHighLondonSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
@@ -1416,8 +1432,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // Returns false when there is nothing to draw: the two reads agree (that is one
             // trade, not three), the prior bar has no range, or the EMA has not formed.
+            //
+            // All three zones share ONE thickness, driven by ATR. Two of them never had a
+            // thickness of their own - the 20 EMA is a line and the flip level is a price, so
+            // both used to borrow zone 1's span for want of anything better - and a span
+            // measured off a single prior bar collapses to nothing on a quiet bar, which is
+            // how the whole display ended up unreadable. ATR is the right basis and the EMA
+            // separation is not: these zones exist only while the two reads DISAGREE, and
+            // when the bias is the EMA cloud that disagreement clusters around the EMAs
+            // converging, so an EMA-distance thickness would go to zero exactly when the
+            // zones are needed.
             internal static bool Compute(bool biasBull, bool ltfBull, double prevHigh, double prevLow,
-                                         double ema20, double lowMult, double highMult, out Zones z)
+                                         double ema20, double lowMult, double highMult,
+                                         double atr, double atrMult, out Zones z)
             {
                 z = default(Zones);
 
@@ -1428,19 +1455,36 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!(rng > 0) || double.IsNaN(ema20))
                     return false;
 
-                double bandH = rng * System.Math.Abs(highMult - lowMult);
-                double half = bandH * 0.5;
+                // Fall back to the original prior-bar-range thickness while ATR warms up, so
+                // the opening bars of a chart still draw something honest.
+                double fallback = rng * System.Math.Abs(highMult - lowMult);
+                double t = (!double.IsNaN(atr) && atr > 0 && atrMult > 0) ? atr * atrMult : fallback;
 
-                // Zone 1: take the CBC trade now, against the bias. BRSG measures up from the
-                // prior bar's low, SGCR down from its high, so the two remain correct mirrors
-                // even if the multipliers are set asymmetrically.
-                z.Lo1 = !biasBull ? prevLow + rng * lowMult : prevHigh - rng * highMult;
-                z.Hi1 = !biasBull ? prevLow + rng * highMult : prevHigh - rng * lowMult;
+                // Cap. Zone 1 is centred on the entry span and zone 3 starts at the flip
+                // level, so a thickness above rng*(low+high) would push zone 1 across that
+                // level - it would advertise entries at prices where the CBC flips back, and
+                // it would bury the trigger under zone 1, which is the exact collision zone 3
+                // was designed around.
+                double cap = rng * (lowMult + highMult);
+                if (cap > 0 && t > cap) t = cap;
+                if (!(t > 0)) t = fallback;
+                if (!(t > 0)) return false;
+
+                double half = t * 0.5;
+
+                // Zone 1: take the CBC trade now, against the bias. Centred on the BRSG/SGCR
+                // entry span - BRSG measures up from the prior bar's low, SGCR down from its
+                // high, so the two stay correct mirrors under asymmetric multipliers. The
+                // exact entry edges are not lost by widening this: the BRSG zone feature
+                // already draws them precisely on the same chart.
+                double mid1 = !biasBull
+                    ? prevLow + rng * (lowMult + highMult) * 0.5
+                    : prevHigh - rng * (lowMult + highMult) * 0.5;
+                z.Lo1 = mid1 - half;
+                z.Hi1 = mid1 + half;
                 z.Long1 = !biasBull;
 
-                // Zone 2: fade the retrace into the 20 EMA, with the bias, smaller size. The
-                // EMA is a line, so it takes the same band thickness as the others rather than
-                // an invented tolerance.
+                // Zone 2: fade the retrace into the 20 EMA, with the bias, smaller size.
                 z.Lo2 = ema20 - half;
                 z.Hi2 = ema20 + half;
                 z.Long2 = biasBull;
@@ -1448,11 +1492,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Zone 3: wait for the CBC to confirm, then enter. That entry band depends on a
                 // bar which has not printed, so drawing one would be fiction. What is knowable
                 // now is the trigger: the LTF CBC flips bearish on Close < prior low and bullish
-                // on Close > prior high. Marking the far side of that level is both the honest
-                // rendering and what keeps zone 3 off zone 1's rectangle, since at the symmetric
-                // default multipliers the BRSG and SGCR entry bands are the very same span.
-                z.Lo3 = !biasBull ? prevLow - bandH : prevHigh;
-                z.Hi3 = !biasBull ? prevLow : prevHigh + bandH;
+                // on Close > prior high. The band hangs off the far side of that level, which is
+                // both the honest rendering and what keeps zone 3 clear of zone 1.
+                z.Lo3 = !biasBull ? prevLow - t : prevHigh;
+                z.Hi3 = !biasBull ? prevLow : prevHigh + t;
                 z.Long3 = biasBull;
 
                 return true;
@@ -1460,34 +1503,33 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
         // </OptionZoneGeometry>
 
-        // How far past the last bar each zone runs. A zone is a price band you are waiting
-        // for, so it has to read forward; anchored 1 -> 0 it rendered as a two-bar sliver at
-        // the hard right edge, easy to look straight through on a chart already carrying
-        // BRSG, flip lines, ORB regions and the status panel.
-        //
-        // Projected by TIME, not by negative barsAgo. Draw.Line ships a -1 for LTF pivots so
-        // one bar of negative barsAgo is known good, but nothing in this install draws
-        // further than that, and an out-of-range anchor throws inside OnBarUpdate, which
-        // takes the whole indicator down for that chart. DrawHtfPivotLines already extends
-        // past the last bar with Time[0].Add(BarsPeriodToTimeSpan(BarsPeriod)); this is that
-        // same proven call, several periods wide. Inherits that helper's one weakness: on
-        // tick/range/volume bars BarsPeriodToTimeSpan falls back to treating Value as
-        // minutes, so the band over-extends to the right there. Harmless, and this indicator
-        // runs on time bars.
-        private const int optionZoneExtendBars = 5;
+        // Zone state handed from OnBarUpdate to OnRender. These zones are PAINTED in
+        // OnRender the way OrderFlowZones paints its OB/FVG zones, not created as draw
+        // objects, which is why there are no tags here any more. Three consequences worth
+        // knowing: the bands size themselves in pixels and always reach the chart's right
+        // edge, so no barsAgo or time projection is involved; they render under this
+        // indicator's own Draw.* output, which is the right layer for a translucent band
+        // sitting behind the flip lines and BRSG; and they are no longer selectable or
+        // listed under Drawing Objects, same as OrderFlowZones.
+        private bool optionZonesActive;
+        private readonly double[] optionZoneLo = new double[3];
+        private readonly double[] optionZoneHi = new double[3];
+        private readonly bool[] optionZoneLong = new bool[3];
+        private readonly string[] optionZoneText = new string[3];
 
-        // Fixed tags, so each call replaces the previous zone in place. Nothing here is
-        // dated, so CleanupOldDrawings' prefix sweep never touches these.
-        private static readonly string[] optionZoneTags = { "MSOptZone1", "MSOptZone2", "MSOptZone3" };
-        private static readonly string[] optionZoneLabelTags = { "MSOptLbl1", "MSOptLbl2", "MSOptLbl3" };
+        // Absolute bar index where the current mixed-signal episode began, so the band spans
+        // the disagreement rather than starting at the last bar (which would be a sliver
+        // again). Resets whenever the episode ends or the bias side changes.
+        private int optionZoneStartBar = -1;
+        private bool optionZoneLastBiasBull;
+
+        private ATR optionZoneAtrIndicator;
+        private double optionZoneAtr = double.NaN;
 
         private void ClearOptionZones()
         {
-            for (int i = 0; i < 3; i++)
-            {
-                RemoveDrawObject(optionZoneTags[i]);
-                RemoveDrawObject(optionZoneLabelTags[i]);
-            }
+            optionZonesActive = false;
+            optionZoneStartBar = -1;
         }
 
         // Maple's three trading options, drawn at price.
@@ -1506,6 +1548,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ClearOptionZones();
                 return;
             }
+
+            // Read ATR here, once per bar, so the render thread never touches a series.
+            // Below the period it stays NaN and Compute falls back to the prior-bar range.
+            if (optionZoneAtrIndicator != null && CurrentBar >= OptionZoneAtrPeriod)
+                optionZoneAtr = optionZoneAtrIndicator[0];
 
             bool biasBull;
             if (PreviewOptionZones)
@@ -1538,46 +1585,131 @@ namespace NinjaTrader.NinjaScript.Indicators
                     : previousHtfCbc;
             }
 
+            // ATR drives the band thickness. optionZoneAtr is refreshed once per bar rather
+            // than read here so OnRender never touches an indicator series off its own thread.
             OptionZoneGeometry.Zones z;
             if (!OptionZoneGeometry.Compute(biasBull, cbcState, High[1], Low[1], Values[1][0],
-                                            BrsgLowMult, BrsgHighMult, out z))
+                                            BrsgLowMult, BrsgHighMult,
+                                            optionZoneAtr, OptionZoneAtrMult, out z))
             {
                 ClearOptionZones();
                 return;
             }
 
-            double[] lo = { z.Lo1, z.Lo2, z.Lo3 };
-            double[] hi = { z.Hi1, z.Hi2, z.Hi3 };
-            bool[] isLong = { z.Long1, z.Long2, z.Long3 };
+            // A new episode starts when the disagreement begins, or when it switches sides.
+            // Everything after that keeps the same left edge, so the band grows to show how
+            // long the mixed signal has stood.
+            if (!optionZonesActive || optionZoneLastBiasBull != biasBull || optionZoneStartBar < 0)
+                optionZoneStartBar = CurrentBar;
+            optionZoneLastBiasBull = biasBull;
+
+            optionZoneLo[0] = z.Lo1; optionZoneHi[0] = z.Hi1; optionZoneLong[0] = z.Long1;
+            optionZoneLo[1] = z.Lo2; optionZoneHi[1] = z.Hi2; optionZoneLong[1] = z.Long2;
+            optionZoneLo[2] = z.Lo3; optionZoneHi[2] = z.Hi3; optionZoneLong[2] = z.Long3;
+
             string[] text = !biasBull
                 ? new string[] { "1 BRSG LONG", "2 EMA20 SHORT (small)", "3 SGCR SHORT on flip" }
                 : new string[] { "1 SGCR SHORT", "2 EMA20 LONG (small)", "3 BRSG LONG on flip" };
 
-            if (PreviewOptionZones)
-                for (int i = 0; i < text.Length; i++)
-                    text[i] += "  (PREVIEW)";
-
-            int opacity = Math.Max(0, Math.Min(100, OptionZoneOpacity));
-            SimpleFont zoneFont = new SimpleFont("Arial", 10);
-
-            DateTime zoneLeft = Time[1];
-            DateTime zoneRight = Time[0].Add(TimeSpan.FromTicks(
-                BarsPeriodToTimeSpan(BarsPeriod).Ticks * optionZoneExtendBars));
-
             for (int i = 0; i < 3; i++)
-            {
-                Brush b = isLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
-                Draw.Rectangle(this, optionZoneTags[i], false,
-                               zoneLeft, lo[i], zoneRight, hi[i], b, b, opacity);
+                optionZoneText[i] = PreviewOptionZones ? text[i] + "  (PREVIEW)" : text[i];
 
+            optionZonesActive = true;
+        }
+
+        // Paint the three zones, in the same visual language OrderFlowZones uses for its OB
+        // and FVG zones: a flat translucent fill, a lighter strip along the edge the zone is
+        // defended from as a cheap stand-in for a gradient, a 1px border at a stronger alpha,
+        // and an interior label. The volumetric split bar it draws inside each zone has no
+        // counterpart here - there is no order-flow data on this chart - so that part is left
+        // out rather than faked.
+        private void RenderOptionZones(NinjaTrader.Gui.Chart.ChartControl chartControl,
+                                       NinjaTrader.Gui.Chart.ChartScale chartScale)
+        {
+            if (!optionZonesActive || chartControl == null || chartScale == null) return;
+            if (ChartBars == null || optionZoneStartBar < 0) return;
+
+            float panelRight = (float)(chartScale.ChartPanel.X + chartScale.ChartPanel.W);
+            float xRight = panelRight - 2f;
+            float xLeft = GetXForBar(chartControl, optionZoneStartBar);
+            if (xLeft > xRight) xLeft = xRight - 4f;
+            float zoneW = xRight - xLeft;
+            if (zoneW < 1f) return;
+
+            float fillOpacity = Math.Max(0, Math.Min(100, OptionZoneOpacity)) / 100f;
+            const float textPx = 11f;
+            const float interiorPad = 3f;
+
+            SharpDX.DirectWrite.TextFormat zoneFmt = null;
+            try
+            {
                 if (ShowOptionZoneLabels)
-                    Draw.Text(this, optionZoneLabelTags[i], false, text[i],
-                              1, hi[i], 8,
-                              b, zoneFont, TextAlignment.Left,
-                              Brushes.Transparent, Brushes.Transparent, 0);
-                else
-                    RemoveDrawObject(optionZoneLabelTags[i]);
+                    zoneFmt = new SharpDX.DirectWrite.TextFormat(
+                        NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", textPx)
+                    { TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading };
+
+                for (int i = 0; i < 3; i++)
+                {
+                    Brush baseBrush = optionZoneLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
+                    SharpDX.Color4 baseColor = ToD2DColor(baseBrush);
+                    float alpha = fillOpacity * baseColor.Alpha;
+                    if (alpha < 0.001f) continue;
+
+                    float yTop = (float)chartScale.GetYByValue(optionZoneHi[i]);
+                    float yBot = (float)chartScale.GetYByValue(optionZoneLo[i]);
+                    if (yTop > yBot) { float tmp = yTop; yTop = yBot; yBot = tmp; }
+                    float zoneH = yBot - yTop;
+                    if (zoneH < 1f) zoneH = 1f;
+
+                    var rect = new SharpDX.RectangleF(xLeft, yTop, zoneW, zoneH);
+
+                    using (var fill = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
+                               new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue, alpha)))
+                        RenderTarget.FillRectangle(rect, fill);
+
+                    // The lighter strip sits on the side price has to come from: along the
+                    // bottom of a zone you are buying into, the top of one you are selling
+                    // into. Same trick and same numbers as OrderFlowZones.
+                    float stripH = Math.Min(zoneH * 0.35f, 6f);
+                    float stripY = optionZoneLong[i] ? yBot - stripH : yTop;
+                    var stripColor = new SharpDX.Color4(
+                        Math.Min(baseColor.Red + 0.15f, 1f),
+                        Math.Min(baseColor.Green + 0.15f, 1f),
+                        Math.Min(baseColor.Blue + 0.15f, 1f),
+                        alpha * 0.5f);
+                    using (var strip = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, stripColor))
+                        RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, stripY, zoneW, stripH), strip);
+
+                    using (var border = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
+                               new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue,
+                                                  Math.Min(alpha * 2.5f, 0.9f))))
+                        RenderTarget.DrawRectangle(rect, border, 1f);
+
+                    if (zoneFmt == null) continue;
+
+                    float lblY = optionZoneLong[i]
+                        ? yTop + interiorPad
+                        : yBot - textPx - interiorPad;
+                    float lblW = Math.Max(zoneW - interiorPad * 2f, 20f);
+                    var lblRect = new SharpDX.RectangleF(xLeft + interiorPad, lblY, lblW, textPx + 2f);
+                    using (var txt = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
+                               new SharpDX.Color4(baseColor.Red, baseColor.Green, baseColor.Blue, 1f)))
+                        RenderTarget.DrawText(optionZoneText[i] ?? string.Empty, zoneFmt, lblRect, txt);
+                }
             }
+            finally
+            {
+                if (zoneFmt != null) zoneFmt.Dispose();
+            }
+        }
+
+        // Absolute bar index to an X pixel. Guarded because the index can fall outside what
+        // the chart currently holds after a reload, and an exception here would take the
+        // whole render pass down.
+        private float GetXForBar(NinjaTrader.Gui.Chart.ChartControl chartControl, int barIndex)
+        {
+            try { return (float)chartControl.GetXByBarIndex(ChartBars, barIndex); }
+            catch { return (float)chartControl.CanvasLeft; }
         }
 
         private void UpdateStatusPanel()
@@ -1994,8 +2126,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         protected override void OnRender(NinjaTrader.Gui.Chart.ChartControl chartControl, NinjaTrader.Gui.Chart.ChartScale chartScale)
         {
             base.OnRender(chartControl, chartScale);
-            if (!ShowStatusTable || statusRowData == null || statusRowData.Length == 0) return;
             if (RenderTarget == null) return;
+
+            // Zones first so the status panel paints over them, not under.
+            RenderOptionZones(chartControl, chartScale);
+
+            if (!ShowStatusTable || statusRowData == null || statusRowData.Length == 0) return;
 
             float fontSize = GetFontSize(StatusTableTextSize);
             var typeface = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", fontSize) { TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading };
