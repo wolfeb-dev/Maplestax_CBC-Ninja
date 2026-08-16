@@ -1595,8 +1595,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         // decided at the moment the signals disagree, so that is when the prices are fixed.
         private sealed class OptionZoneEpisode
         {
-            public int StartBar;
-            public int EndBar = -1;                  // -1 while live
+            // Anchored by TIME, not by bar index. A bar index is only meaningful against the
+            // series it was counted on, and the render pass resolves it against ChartBars;
+            // any disagreement between those two bases puts the whole band at the wrong x,
+            // which is a zone floating away from the candles that produced it. A bar's time
+            // has no such ambiguity.
+            public DateTime StartTime;
+            public DateTime EndTime = DateTime.MinValue;        // MinValue while live
             public bool BiasBull;
             public DateTime OpenDateEt;      // ET calendar day the episode opened on
             public int EndHhmm;              // ET cutoff as HHMM, 0 = none
@@ -1604,25 +1609,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             public readonly double[] Hi = new double[3];
             public readonly bool[] IsLong = new bool[3];
             public readonly string[] Text = new string[3];
-            public readonly int[] ClosedBar = { -1, -1, -1 };   // per zone, -1 = still valid
+            public readonly DateTime[] ClosedTime =
+                { DateTime.MinValue, DateTime.MinValue, DateTime.MinValue };
         }
 
         private readonly List<OptionZoneEpisode> optionZoneHistory = new List<OptionZoneEpisode>();
         private OptionZoneEpisode optionZoneLive;
-
-        // True when the next mixed signal is entitled to a new episode. Cleared on open, so an
-        // episode that died on its own terms (all three zones closed through, or the cutoff)
-        // does NOT immediately reopen on the same standing signal.
-        private bool optionZoneArmed = true;
-
-        // Which side the disagreement was on last bar, tracked SEPARATELY from the live
-        // episode. It has to be: an episode that already retired leaves optionZoneLive null,
-        // and if the side-change test hung off the live episode a bias that flipped straight
-        // from one side to the other would never re-arm - zones would stop appearing for good.
-        // Preview takes that path routinely, because its forced disagreement means Compute
-        // never fails and agreement never re-arms anything.
-        private bool optionZoneLastBiasBull;
-        private bool optionZoneHadMixed;
 
         private ATR optionZoneAtrIndicator;
         private double optionZoneAtr = double.NaN;
@@ -1631,16 +1623,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             optionZoneLive = null;
             optionZoneHistory.Clear();
-            optionZoneArmed = true;
-            optionZoneHadMixed = false;
         }
 
-        // Close the live episode at endBar and file it as an example.
-        private void RetireOptionZoneEpisode(int endBar)
+        // Close the live episode at endTime and file it as an example.
+        private void RetireOptionZoneEpisode(DateTime endTime)
         {
             if (optionZoneLive == null) return;
 
-            optionZoneLive.EndBar = endBar;
+            optionZoneLive.EndTime = endTime;
             optionZoneHistory.Add(optionZoneLive);
             optionZoneLive = null;
 
@@ -1682,36 +1672,49 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (optionZoneAtrIndicator != null && CurrentBar >= OptionZoneAtrPeriod)
                 optionZoneAtr = optionZoneAtrIndicator[0];
 
-            // Age the live episode before anything else. Each zone truncates on the bar that
-            // closes through it; the episode as a whole ends once all three are gone or the
-            // cutoff passes. Neither re-arms: a standing disagreement does not get a fresh set
-            // of zones just because the last set was invalidated.
+            DateTime etNow = ConvertToEastern(Time[0]);
+
+            // 1. Age the live episode. Its zones are frozen, so the ONLY things that can end
+            //    it are price closing through them and the clock. Deliberately NOT the setup
+            //    conditions: once the three options are on the chart they stand until they are
+            //    invalidated or time out. Re-testing the entry conditions here is what made an
+            //    episode blink out and back in as price oscillated over the cloud edge.
             if (optionZoneLive != null)
             {
                 bool allClosed = true;
                 for (int i = 0; i < 3; i++)
                 {
-                    if (optionZoneLive.ClosedBar[i] < 0
+                    if (optionZoneLive.ClosedTime[i] == DateTime.MinValue
                         && OptionZoneGeometry.ClosedThrough(optionZoneLive.IsLong[i],
                                                             optionZoneLive.Lo[i],
                                                             optionZoneLive.Hi[i], Close[0]))
-                        optionZoneLive.ClosedBar[i] = CurrentBar;
+                        optionZoneLive.ClosedTime[i] = Time[0];
 
-                    if (optionZoneLive.ClosedBar[i] < 0) allClosed = false;
+                    if (optionZoneLive.ClosedTime[i] == DateTime.MinValue) allClosed = false;
                 }
 
                 // The ET-date test is not redundant with the HHMM one. If the session ends
                 // before the cutoff time, the next bar is the following morning at an HHMM
                 // still under the cutoff, and without the date check the episode would stretch
                 // straight across the overnight gap.
-                DateTime etNow = ConvertToEastern(Time[0]);
                 bool pastCutoff = etNow.Date != optionZoneLive.OpenDateEt
                     || (optionZoneLive.EndHhmm > 0
                         && etNow.Hour * 100 + etNow.Minute >= optionZoneLive.EndHhmm);
 
                 if (allClosed || pastCutoff)
-                    RetireOptionZoneEpisode(CurrentBar);
+                    RetireOptionZoneEpisode(Time[0]);
             }
+
+            if (optionZoneLive != null)
+                return;   // one episode at a time; it continues, frozen where it was drawn
+
+            // 2. THE TRIGGER IS THE FLIP, not the state. "CBC flips long into the EMAs" names
+            //    an event on one bar. Opening on the standing condition instead meant every
+            //    bar where the reads happened to disagree was a candidate, and because a
+            //    failed cloud test re-armed the next one, price wobbling across the cloud edge
+            //    spawned a fresh episode on each re-entry. One flip, one episode.
+            if (cbcStatePrev == cbcState)
+                return;
 
             bool biasBull;
             bool ltfBull = cbcState;
@@ -1719,30 +1722,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (PreviewOptionZones)
             {
-                // Review aid. A real setup needs the reads to disagree AND price to still be
-                // on the near side of the cloud, which at the last printed bar of a closed
-                // market is mostly not the case - so there is nothing to look at exactly when
-                // there is time to look.
-                //
-                // Preview takes the bias from the REAL EMA stack and forces only the LTF CBC
-                // to the opposite side, then drops the cloud-side gate. That keeps zone 2 on
-                // the genuine HTF 20 with the genuine stack direction, so the picture is the
-                // real one with a single synthetic input, rather than an invented bias that
-                // would put zone 2 on the wrong side of price. Labels carry PREVIEW.
+                // Review aid. It takes the bias from the REAL EMA stack and forces only the
+                // LTF CBC to the opposite side, then drops the cloud-side test, so every CBC
+                // flip in the window becomes a worked example. One synthetic input: zone 2
+                // still sits on the genuine HTF 20 with the genuine stack direction, so what
+                // is on screen is the geometry that ships. Labels carry PREVIEW.
                 biasBull = actualHtfEmaBullish;
                 ltfBull = !biasBull;
                 requireCloudSide = false;
-
-                // Turn the episode over on every CBC flip. Taking the bias from the real EMA
-                // stack means the side almost never changes, so without this a preview run
-                // would leave one long-lived episode on the chart instead of a set of worked
-                // examples. A flip is also the honest trigger: a real episode begins when the
-                // CBC flips into the cloud, which is precisely what is being forced here.
-                if (cbcStatePrev != cbcState)
-                {
-                    RetireOptionZoneEpisode(CurrentBar);
-                    optionZoneArmed = true;
-                }
             }
             else
             {
@@ -1751,20 +1738,25 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // opening bars would draw zones off a bias nothing has measured yet.
                 if (!HtfEnabled || !htfDataSeriesAdded || htfSeriesIndex < 0
                     || CurrentBars[htfSeriesIndex] < 2)
-                {
-                    RetireOptionZoneEpisode(CurrentBar);
-                    optionZoneArmed = true;
-                    optionZoneHadMixed = false;
                     return;
-                }
 
                 biasBull = OptionZoneBias == MapleStaxOptionBias.HtfEmaCloud
                     ? actualHtfEmaBullish
                     : previousHtfCbc;
             }
 
-            // ATR drives the band thickness. optionZoneAtr is refreshed once per bar rather
-            // than read here so OnRender never touches an indicator series off its own thread.
+            // 3. The flip has to be AGAINST the higher-timeframe bias. A flip that agrees with
+            //    it is just one trade, which the BRSG zone and flip lines already show.
+            if (ltfBull == biasBull)
+                return;
+
+            // 4. Only inside the session window. This applies to Preview too: a preview run
+            //    that opened episodes all day would refill the kept-example slots from the
+            //    afternoon and evict the morning ones, which is the session worth studying.
+            if (!OptionZoneGeometry.InWindow(etNow.Hour * 100 + etNow.Minute,
+                                             OptionZoneWindowStartEt, OptionZoneWindowEndEt))
+                return;
+
             // Preview can run before the HTF series has produced an EMA, so fall back to the
             // chart's own slow EMA there purely to have something on screen. Live zones never
             // take that path: the warm-up gate above has already required two closed HTF bars.
@@ -1781,36 +1773,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                                             htfFast, htfSlow, Close[0], requireCloudSide,
                                             BrsgLowMult, BrsgHighMult,
                                             optionZoneAtr, OptionZoneAtrMult, out z))
-            {
-                // The reads agree again (or the bar is degenerate): the episode is over and
-                // the next disagreement is entitled to a fresh set of zones.
-                RetireOptionZoneEpisode(CurrentBar);
-                optionZoneArmed = true;
-                optionZoneHadMixed = false;
-                return;
-            }
-
-            // The bias switching sides is a different setup, not a continuation.
-            if (optionZoneHadMixed && optionZoneLastBiasBull != biasBull)
-            {
-                RetireOptionZoneEpisode(CurrentBar);
-                optionZoneArmed = true;
-            }
-            optionZoneLastBiasBull = biasBull;
-            optionZoneHadMixed = true;
-
-            if (optionZoneLive != null || !optionZoneArmed)
-                return;   // live episode continues, frozen where it was drawn
-
-            // Only inside the session window. This gate applies to Preview too: a preview run
-            // that opened episodes all day would refill the kept-example slots from the
-            // afternoon and evict the morning ones, which is the session you want to study.
-            DateTime openEt = ConvertToEastern(Time[0]);
-            if (!OptionZoneGeometry.InWindow(openEt.Hour * 100 + openEt.Minute,
-                                             OptionZoneWindowStartEt, OptionZoneWindowEndEt))
                 return;
 
-            var ep = new OptionZoneEpisode { StartBar = CurrentBar, BiasBull = biasBull };
+            var ep = new OptionZoneEpisode { StartTime = Time[0], BiasBull = biasBull };
             ep.Lo[0] = z.Lo1; ep.Hi[0] = z.Hi1; ep.IsLong[0] = z.Long1;
             ep.Lo[1] = z.Lo2; ep.Hi[1] = z.Hi2; ep.IsLong[1] = z.Long2;
             ep.Lo[2] = z.Lo3; ep.Hi[2] = z.Hi3; ep.IsLong[2] = z.Long3;
@@ -1821,11 +1786,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             for (int i = 0; i < 3; i++)
                 ep.Text[i] = PreviewOptionZones ? text[i] + "  (PREVIEW)" : text[i];
 
-            ep.OpenDateEt = openEt.Date;
+            ep.OpenDateEt = etNow.Date;
             ep.EndHhmm = OptionZoneWindowEndEt;
 
             optionZoneLive = ep;
-            optionZoneArmed = false;
         }
 
         // Paint the three zones, in the same visual language OrderFlowZones uses for its OB
@@ -1871,11 +1835,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             const float interiorPad = 3f;
 
             float panelRight = (float)(chartScale.ChartPanel.X + chartScale.ChartPanel.W);
-            float xLeft = GetXForBar(chartControl, ep.StartBar);
+            float xLeft = GetXForTime(chartControl, ep.StartTime);
 
             // Where the episode as a whole stops: the right edge while it is live, otherwise
             // the bar it was retired on.
-            float xEpisodeEnd = ep.EndBar >= 0 ? GetXForBar(chartControl, ep.EndBar) : panelRight - 2f;
+            float xEpisodeEnd = ep.EndTime != DateTime.MinValue
+                ? GetXForTime(chartControl, ep.EndTime)
+                : panelRight - 2f;
             if (xEpisodeEnd > panelRight - 2f) xEpisodeEnd = panelRight - 2f;
 
             float fillOpacity = Math.Max(0, Math.Min(100, OptionZoneOpacity)) / 100f;
@@ -1884,14 +1850,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 // Each zone truncates on its own bar. A zone that was closed through stops
                 // there even if the other two carried the episode on.
-                float xRight = ep.ClosedBar[i] >= 0
-                    ? Math.Min(xEpisodeEnd, GetXForBar(chartControl, ep.ClosedBar[i]))
+                float xRight = ep.ClosedTime[i] != DateTime.MinValue
+                    ? Math.Min(xEpisodeEnd, GetXForTime(chartControl, ep.ClosedTime[i]))
                     : xEpisodeEnd;
                 if (xLeft >= xRight) continue;
                 float zoneW = xRight - xLeft;
                 if (zoneW < 1f) continue;
 
-                bool spent = ep.EndBar >= 0 || ep.ClosedBar[i] >= 0;
+                bool spent = ep.EndTime != DateTime.MinValue || ep.ClosedTime[i] != DateTime.MinValue;
 
                 Brush baseBrush = ep.IsLong[i] ? OptionZoneLongColor : OptionZoneShortColor;
                 SharpDX.Color4 baseColor = ToD2DColor(baseBrush);
@@ -1933,7 +1899,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Full text on the live episode. Retired examples carry the zone number only:
                 // six worked examples at three lines each is eighteen strings of chart noise,
                 // and the number plus the colour already says which option it was.
-                string label = ep.EndBar >= 0
+                string label = ep.EndTime != DateTime.MinValue
                     ? (string.IsNullOrEmpty(ep.Text[i]) ? string.Empty : ep.Text[i].Substring(0, 1))
                     : (ep.Text[i] ?? string.Empty);
 
@@ -1947,12 +1913,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        // Absolute bar index to an X pixel. Guarded because the index can fall outside what
-        // the chart currently holds after a reload, and an exception here would take the
-        // whole render pass down.
-        private float GetXForBar(NinjaTrader.Gui.Chart.ChartControl chartControl, int barIndex)
+        // Bar time to an X pixel. By time rather than by bar index on purpose: an index only
+        // means anything against the series that counted it, and resolving it against
+        // ChartBars puts the band wherever those two bases disagree. Guarded because a time
+        // outside what the chart currently holds must not take the whole render pass down.
+        private float GetXForTime(NinjaTrader.Gui.Chart.ChartControl chartControl, DateTime t)
         {
-            try { return (float)chartControl.GetXByBarIndex(ChartBars, barIndex); }
+            try { return (float)chartControl.GetXByTime(t); }
             catch { return (float)chartControl.CanvasLeft; }
         }
 
