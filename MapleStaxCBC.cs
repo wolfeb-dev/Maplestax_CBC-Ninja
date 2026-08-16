@@ -112,8 +112,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool PreviewOptionZones { get; set; } = false;
 
         [NinjaScriptProperty]
-        [Display(Name = "Bias source", GroupName = "Option zones", Order = 3, Description = "Which higher-timeframe read is the bias: the HTF CBC state, or the HTF EMA cloud (HTF fast EMA vs HTF slow EMA). Ignored while Preview is on.")]
-        public MapleStaxOptionBias OptionZoneBias { get; set; } = MapleStaxOptionBias.HtfCbc;
+        [Display(Name = "Bias source", GroupName = "Option zones", Order = 3, Description = "Which higher-timeframe read is the bias. HTF EMA cloud is the setup as traded: the HTF 9 against the HTF 20, and price must still be on the near side of both. HTF CBC uses the higher-timeframe CBC state instead and has no cloud to gate on, so it fires on the disagreement alone.")]
+        public MapleStaxOptionBias OptionZoneBias { get; set; } = MapleStaxOptionBias.HtfEmaCloud;
 
         [NinjaScriptProperty]
         [Display(Name = "Width (x ATR)", GroupName = "Option zones", Order = 4, Description = "Height of each zone as a multiple of ATR. All three zones share this thickness. Capped so zone 1 can never spill across the flip level zone 3 marks.")]
@@ -602,6 +602,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // HTF EMA bullish state
         private bool actualHtfEmaBullish = true;
+        private double actualHtfEmaFastVal = double.NaN;
+        private double actualHtfEmaSlowVal = double.NaN;
 
 
         // OR fill series + session brushes
@@ -1451,8 +1453,22 @@ namespace NinjaTrader.NinjaScript.Indicators
             // when the bias is the EMA cloud that disagreement clusters around the EMAs
             // converging, so an EMA-distance thickness would go to zero exactly when the
             // zones are needed.
+            // The setup, stated the way it is traded: the higher-timeframe EMAs are stacked
+            // one way and sitting on the far side of price, and the LTF CBC flips INTO them.
+            // Bearish stack (HTF 20 over HTF 9) with the cloud overhead and price beneath it,
+            // CBC flipping long, gives: (1) take the CBC long on BRSG, against the HTF;
+            // (2) short the HTF 20 as price reaches it, with the HTF but unconfirmed, so
+            // smaller; (3) wait for the CBC to flip back short and take SGCR with both
+            // timeframes aligned. Bullish stack is the exact mirror.
+            //
+            // Both EMAs are the HIGHER timeframe's. Anchoring zone 2 on the chart's own 20
+            // was wrong: it sits on top of price, so "short the 20" became a fade at a level
+            // price was already trading through, rather than the overhead EMA the rally is
+            // running into.
             internal static bool Compute(bool biasBull, bool ltfBull, double prevHigh, double prevLow,
-                                         double ema20, double lowMult, double highMult,
+                                         double htfEmaFast, double htfEmaSlow, double close,
+                                         bool requireCloudSide,
+                                         double lowMult, double highMult,
                                          double atr, double atrMult, out Zones z)
             {
                 z = default(Zones);
@@ -1461,8 +1477,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                     return false;
 
                 double rng = prevHigh - prevLow;
-                if (!(rng > 0) || double.IsNaN(ema20))
+                if (!(rng > 0) || double.IsNaN(htfEmaSlow))
                     return false;
+
+                // "Into the EMAs" is half the setup, so price has to still be on the near
+                // side of the whole cloud. Fails closed on a missing input: a gate that opens
+                // when it cannot see is not a gate.
+                if (requireCloudSide)
+                {
+                    if (double.IsNaN(htfEmaFast) || double.IsNaN(close))
+                        return false;
+
+                    double cloudLo = System.Math.Min(htfEmaFast, htfEmaSlow);
+                    double cloudHi = System.Math.Max(htfEmaFast, htfEmaSlow);
+
+                    if (!biasBull && !(close < cloudLo)) return false;
+                    if (biasBull && !(close > cloudHi)) return false;
+                }
 
                 // Fall back to the original prior-bar-range thickness while ATR warms up, so
                 // the opening bars of a chart still draw something honest.
@@ -1493,9 +1524,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 z.Hi1 = mid1 + half;
                 z.Long1 = !biasBull;
 
-                // Zone 2: fade the retrace into the 20 EMA, with the bias, smaller size.
-                z.Lo2 = ema20 - half;
-                z.Hi2 = ema20 + half;
+                // Zone 2: the trade AT the higher-timeframe 20, with the bias, smaller size
+                // because the LTF CBC has not confirmed it. In a bearish stack the 20 is the
+                // upper EMA, so this is the short price rallies into; in a bullish stack it is
+                // the lower one, and the mirror holds.
+                z.Lo2 = htfEmaSlow - half;
+                z.Hi2 = htfEmaSlow + half;
                 z.Long2 = biasBull;
 
                 // Zone 3: wait for the CBC to confirm, then enter. That entry band depends on a
@@ -1655,18 +1689,35 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             bool biasBull;
+            bool ltfBull = cbcState;
+            bool requireCloudSide = OptionZoneBias == MapleStaxOptionBias.HtfEmaCloud;
+
             if (PreviewOptionZones)
             {
-                // Review aid. The zones only exist while the two reads disagree, which on a
-                // closed market at the last printed bar is a coin flip, so there is nothing
-                // to look at exactly when there is time to look. Inverting the LTF CBC makes
-                // the disagreement certain (see the preview invariant in OptionZoneTests),
-                // and skipping the warm-up gate below lets it draw before the HTF series has
-                // closed two bars. Only the bias is synthetic: the rectangles are computed
-                // from this chart's real prior-bar range and real 20 EMA, so what you judge
-                // for size, placement and legibility is what ships. Labels carry PREVIEW so
-                // a forced draw cannot be read as a live setup.
-                biasBull = !cbcState;
+                // Review aid. A real setup needs the reads to disagree AND price to still be
+                // on the near side of the cloud, which at the last printed bar of a closed
+                // market is mostly not the case - so there is nothing to look at exactly when
+                // there is time to look.
+                //
+                // Preview takes the bias from the REAL EMA stack and forces only the LTF CBC
+                // to the opposite side, then drops the cloud-side gate. That keeps zone 2 on
+                // the genuine HTF 20 with the genuine stack direction, so the picture is the
+                // real one with a single synthetic input, rather than an invented bias that
+                // would put zone 2 on the wrong side of price. Labels carry PREVIEW.
+                biasBull = actualHtfEmaBullish;
+                ltfBull = !biasBull;
+                requireCloudSide = false;
+
+                // Turn the episode over on every CBC flip. Taking the bias from the real EMA
+                // stack means the side almost never changes, so without this a preview run
+                // would leave one long-lived episode on the chart instead of a set of worked
+                // examples. A flip is also the honest trigger: a real episode begins when the
+                // CBC flips into the cloud, which is precisely what is being forced here.
+                if (cbcStatePrev != cbcState)
+                {
+                    RetireOptionZoneEpisode(CurrentBar);
+                    optionZoneArmed = true;
+                }
             }
             else
             {
@@ -1689,8 +1740,20 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // ATR drives the band thickness. optionZoneAtr is refreshed once per bar rather
             // than read here so OnRender never touches an indicator series off its own thread.
+            // Preview can run before the HTF series has produced an EMA, so fall back to the
+            // chart's own slow EMA there purely to have something on screen. Live zones never
+            // take that path: the warm-up gate above has already required two closed HTF bars.
+            double htfFast = actualHtfEmaFastVal;
+            double htfSlow = actualHtfEmaSlowVal;
+            if (PreviewOptionZones && double.IsNaN(htfSlow))
+            {
+                htfSlow = Values[1][0];
+                htfFast = double.NaN;
+            }
+
             OptionZoneGeometry.Zones z;
-            if (!OptionZoneGeometry.Compute(biasBull, cbcState, High[1], Low[1], Values[1][0],
+            if (!OptionZoneGeometry.Compute(biasBull, ltfBull, High[1], Low[1],
+                                            htfFast, htfSlow, Close[0], requireCloudSide,
                                             BrsgLowMult, BrsgHighMult,
                                             optionZoneAtr, OptionZoneAtrMult, out z))
             {
@@ -1966,6 +2029,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             double actualHtfEma9 = EMA(Closes[idx], HtfEmaFastPeriod)[0];
             double actualHtfEma20 = EMA(Closes[idx], HtfEmaSlowPeriod)[0];
             actualHtfEmaBullish = actualHtfEma9 >= actualHtfEma20;
+
+            // Kept, not just compared. The option zones need the levels themselves: zone 2 is
+            // the trade at the HTF 20, and the cloud-side gate needs both to know whether
+            // price is still on the near side of them.
+            actualHtfEmaFastVal = actualHtfEma9;
+            actualHtfEmaSlowVal = actualHtfEma20;
         }
 
         private void UpdateHtfPivots()

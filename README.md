@@ -17,10 +17,12 @@ The core signal. A **bullish flip** prints when a candle closes above the prior 
 ### Option zones
 When the LTF CBC and the higher-timeframe bias point in opposite directions, the method gives you three choices rather than one. This draws all three at price so you can see where each one lives. **Ships off.**
 
+The setup is a CBC flip running **into** the higher-timeframe EMAs. Bearish stack (HTF 20 over HTF 9) with the cloud sitting *above* price, and the LTF CBC flips long toward it. Bullish stack (HTF 9 over HTF 20) with the cloud below price and the CBC flips short into it is the exact mirror. Both conditions are required: the reads disagreeing is not enough on its own, price must still be on the near side of the whole cloud, or option 2 would be a fade at a level price has already left behind.
+
 Worked example, a bearish bias with the LTF CBC freshly flipped long:
 
 1. **BRSG LONG** - take the CBC trade now, against the bias. The band is the usual fractional span of the previous bar's range.
-2. **EMA20 SHORT (small)** - fade the retrace back into the 20 EMA, with the bias, at smaller size because the CBC has not confirmed. The band is the 20 EMA given the same thickness as the other two.
+2. **EMA20 SHORT (small)** - the trade at the **higher-timeframe 20 EMA**, with the bias, at smaller size because the LTF CBC has not confirmed it. In a bearish stack the 20 is the upper EMA, so this is the short price is rallying into; in a bullish stack it is the lower one and the mirror holds. Not the chart's own 20: that sits on top of price and would make this a fade at a level already traded through.
 3. **SGCR SHORT on flip** - wait for the CBC to confirm, then enter. This zone marks the *confirmation trigger*, not an entry: the LTF CBC flips bearish only on a close below the prior bar's low, so the zone sits just under that level. The entry band for that trade depends on a bar that has not printed yet, so drawing one would be invention.
 
 Every one of those mirrors when the bias is bullish and the CBC has flipped short (SGCR short, EMA20 long, BRSG long on flip). Zone 1 always runs against the bias; zones 2 and 3 always run with it.

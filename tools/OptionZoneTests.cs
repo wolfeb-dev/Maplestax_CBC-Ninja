@@ -31,26 +31,37 @@ internal static class OptionZoneTests
     private const double Atr = 8.0;
     private const double AtrMult = 0.5;
 
+    // Placement and thickness cases, with the cloud-side gate switched off so they are not
+    // testing two things at once. The gate has its own block at the end.
+    private static bool C(bool biasBull, bool ltfBull, double prevHigh, double prevLow,
+                          double htfEmaSlow, double lowMult, double highMult,
+                          double atr, double atrMult, out OptionZoneGeometry.Zones z)
+    {
+        return OptionZoneGeometry.Compute(biasBull, ltfBull, prevHigh, prevLow,
+                                          htfEmaSlow, htfEmaSlow, double.NaN, false,
+                                          lowMult, highMult, atr, atrMult, out z);
+    }
+
     private static int Main()
     {
         OptionZoneGeometry.Zones z;
 
         // Agreement is not a three-option situation: bearish bias with a bearish LTF CBC
         // leaves exactly one trade, so nothing should be drawn.
-        Check(!OptionZoneGeometry.Compute(false, false, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z),
+        Check(!C(false, false, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z),
               "agreement (both bearish): no zones");
-        Check(!OptionZoneGeometry.Compute(true, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z),
+        Check(!C(true, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z),
               "agreement (both bullish): no zones");
 
         // Degenerate inputs must not draw.
-        Check(!OptionZoneGeometry.Compute(false, true, 21530, 21530, 21545, LowMult, HighMult, Atr, AtrMult, out z),
+        Check(!C(false, true, 21530, 21530, 21545, LowMult, HighMult, Atr, AtrMult, out z),
               "zero-range prior bar: no zones");
-        Check(!OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, double.NaN, LowMult, HighMult, Atr, AtrMult, out z),
+        Check(!C(false, true, PrevHigh, PrevLow, double.NaN, LowMult, HighMult, Atr, AtrMult, out z),
               "EMA not yet formed: no zones");
 
         // The case from Maple's chart: EMAs above, so a bearish bias, and the LTF CBC has
         // just flipped long. Thickness is ATR-driven now: 8 * 0.5 = 4, so half is 2.
-        Check(OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z),
+        Check(C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z),
               "bearish bias + long CBC: zones drawn");
         Near(z.Lo1, 21528.0, "bearish: zone 1 centred on the BRSG span, ATR thick");
         Near(z.Hi1, 21532.0, "bearish: zone 1 high");
@@ -61,7 +72,7 @@ internal static class OptionZoneTests
         Check(z.Long1 && !z.Long2 && !z.Long3, "bearish: only zone 1 is long");
 
         // Exact mirror: EMAs below, so a bullish bias, and the LTF CBC has flipped short.
-        Check(OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow, 21515, LowMult, HighMult, Atr, AtrMult, out z),
+        Check(C(true, false, PrevHigh, PrevLow, 21515, LowMult, HighMult, Atr, AtrMult, out z),
               "bullish bias + short CBC: zones drawn");
         Near(z.Lo1, 21528.0, "bullish: zone 1 centred on the SGCR span, ATR thick");
         Near(z.Hi1, 21532.0, "bullish: zone 1 high");
@@ -73,16 +84,16 @@ internal static class OptionZoneTests
 
         // All three zones share one thickness. That is the whole point of driving height
         // from ATR: a row of bands that read as one system rather than three sizes.
-        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z);
+        C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z);
         double t1 = z.Hi1 - z.Lo1, t2 = z.Hi2 - z.Lo2, t3 = z.Hi3 - z.Lo3;
         Near(t1, 4.0, "uniform thickness: zone 1 = atr * mult");
         Near(t2, 4.0, "uniform thickness: zone 2 = atr * mult");
         Near(t3, 4.0, "uniform thickness: zone 3 = atr * mult");
 
         // Thickness must track ATR, or the knob does nothing.
-        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, 4.0, AtrMult, out z);
+        C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, 4.0, AtrMult, out z);
         Near(z.Hi1 - z.Lo1, 2.0, "half the ATR gives half the thickness");
-        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, 1.0, out z);
+        C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, 1.0, out z);
         Near(z.Hi1 - z.Lo1, 8.0, "double the multiplier gives double the thickness");
 
         // Before ATR forms there is still a chart to draw on, so an absent ATR falls back to
@@ -90,14 +101,14 @@ internal static class OptionZoneTests
         foreach (double dead in new[] { 0.0, double.NaN })
         {
             OptionZoneGeometry.Zones fz;
-            Check(OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, dead, AtrMult, out fz),
+            Check(C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, dead, AtrMult, out fz),
                   "ATR absent (" + dead + "): still draws");
             Near(fz.Hi1 - fz.Lo1, 2.0, "ATR absent (" + dead + "): falls back to rng * |high-low|");
         }
 
         // The cap. Zone 1 must never spill across the flip level that zone 3 marks, so a
         // huge ATR is clamped rather than allowed to swallow the trigger.
-        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21530, LowMult, HighMult, 1000.0, AtrMult, out z);
+        C(false, true, PrevHigh, PrevLow, 21530, LowMult, HighMult, 1000.0, AtrMult, out z);
         Near(z.Hi1 - z.Lo1, 20.0, "runaway ATR clamps to rng * (low + high)");
         Check(z.Hi3 <= z.Lo1, "clamped: zone 3 still clear of zone 1");
 
@@ -105,7 +116,7 @@ internal static class OptionZoneTests
         // bias, zones 2 and 3 always run with it.
         foreach (bool bias in new[] { true, false })
         {
-            OptionZoneGeometry.Compute(bias, !bias, PrevHigh, PrevLow, 21530, LowMult, HighMult, Atr, AtrMult, out z);
+            C(bias, !bias, PrevHigh, PrevLow, 21530, LowMult, HighMult, Atr, AtrMult, out z);
             Check(z.Long1 == !bias && z.Long2 == bias && z.Long3 == bias,
                   "invariant (bias bull=" + bias + "): 1 against, 2 and 3 with");
         }
@@ -115,16 +126,16 @@ internal static class OptionZoneTests
         foreach (double atr in new[] { 0.5, 4.0, 8.0, 40.0, 1000.0 })
         {
             OptionZoneGeometry.Zones sz;
-            OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, atr, AtrMult, out sz);
+            C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, atr, AtrMult, out sz);
             Check(sz.Hi3 <= sz.Lo1, "atr " + atr + ": zone 3 clear of zone 1 (bearish)");
-            OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow, 21515, LowMult, HighMult, atr, AtrMult, out sz);
+            C(true, false, PrevHigh, PrevLow, 21515, LowMult, HighMult, atr, AtrMult, out sz);
             Check(sz.Lo3 >= sz.Hi1, "atr " + atr + ": zone 3 clear of zone 1 (bullish)");
         }
 
         // Asymmetric multipliers must keep zone 1 a true mirror rather than reusing one span.
         OptionZoneGeometry.Zones zb, zl;
-        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21530, 0.20, 0.40, Atr, AtrMult, out zb);
-        OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow, 21530, 0.20, 0.40, Atr, AtrMult, out zl);
+        C(false, true, PrevHigh, PrevLow, 21530, 0.20, 0.40, Atr, AtrMult, out zb);
+        C(true, false, PrevHigh, PrevLow, 21530, 0.20, 0.40, Atr, AtrMult, out zl);
         Near(zb.Lo1, 21524.0, "asymmetric: bearish zone 1 low");
         Near(zb.Hi1, 21528.0, "asymmetric: bearish zone 1 high");
         Near(zl.Lo1, 21532.0, "asymmetric: bullish zone 1 low");
@@ -132,7 +143,7 @@ internal static class OptionZoneTests
         Check(Math.Abs(zb.Lo1 - zl.Lo1) > 1e-9, "asymmetric: the two zone 1 spans separate");
 
         // Every zone must be a real rectangle, not an inverted or zero-height one.
-        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z);
+        C(false, true, PrevHigh, PrevLow, 21545, LowMult, HighMult, Atr, AtrMult, out z);
         Check(z.Hi1 > z.Lo1 && z.Hi2 > z.Lo2 && z.Hi3 > z.Lo3, "all three zones have positive height");
 
         // The precondition Preview mode stands on. Preview draws by handing Compute a bias
@@ -149,11 +160,72 @@ internal static class OptionZoneTests
                         {
                             OptionZoneGeometry.Zones pz;
                             // Preview's rule verbatim: biasBull = !ltfBull.
-                            if (!OptionZoneGeometry.Compute(!ltfBull, ltfBull, high, PrevLow, ema, lo, HighMult, atr, AtrMult, out pz)
+                            if (!C(!ltfBull, ltfBull, high, PrevLow, ema, lo, HighMult, atr, AtrMult, out pz)
                                 || !(pz.Hi1 > pz.Lo1 && pz.Hi2 > pz.Lo2 && pz.Hi3 > pz.Lo3))
                                 previewAlwaysDraws = false;
                         }
         Check(previewAlwaysDraws, "preview invariant: an opposed bias always draws three real zones");
+
+        // ---- The cloud-side gate ------------------------------------------------------
+        // The setup is a CBC flip running INTO the higher-timeframe EMAs, so the EMAs have to
+        // be on the far side of price. Bearish stack (slow over fast) means the cloud is
+        // overhead and price must still be underneath it; bullish is the mirror. Without this
+        // the zones fire on a flip that happens with price already through the cloud, and
+        // option 2 becomes a fade at a level price has left behind.
+        const double CloudFastBear = 21570.0;   // bearish stack: slow ABOVE fast
+        const double CloudSlowBear = 21590.0;
+        const double CloudFastBull = 21590.0;   // bullish stack: fast above slow
+        const double CloudSlowBull = 21570.0;
+
+        Check(OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  CloudFastBear, CloudSlowBear, 21540.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "bearish cloud overhead, price below it: the setup is on");
+        Check(!OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  CloudFastBear, CloudSlowBear, 21575.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "bearish cloud, price already inside it: no setup");
+        Check(!OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  CloudFastBear, CloudSlowBear, 21600.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "bearish cloud, price above it entirely: no setup");
+
+        Check(OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow,
+                  CloudFastBull, CloudSlowBull, 21620.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "bullish cloud below, price above it: the setup is on");
+        Check(!OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow,
+                  CloudFastBull, CloudSlowBull, 21580.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "bullish cloud, price already inside it: no setup");
+        Check(!OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow,
+                  CloudFastBull, CloudSlowBull, 21500.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "bullish cloud, price below it entirely: no setup");
+
+        // Zone 2 is the trade AT the 20, so it must sit on the slow EMA and nowhere else.
+        OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+            CloudFastBear, CloudSlowBear, 21540.0, true, LowMult, HighMult, Atr, AtrMult, out z);
+        Near((z.Lo2 + z.Hi2) * 0.5, CloudSlowBear, "zone 2 is centred on the HTF slow EMA, not the fast one");
+        Check(!z.Long2, "bearish stack: zone 2 is the short into the 20");
+
+        OptionZoneGeometry.Compute(true, false, PrevHigh, PrevLow,
+            CloudFastBull, CloudSlowBull, 21620.0, true, LowMult, HighMult, Atr, AtrMult, out z);
+        Near((z.Lo2 + z.Hi2) * 0.5, CloudSlowBull, "mirror: zone 2 is still centred on the HTF slow EMA");
+        Check(z.Long2, "bullish stack: zone 2 is the long into the 20");
+
+        // With the gate off, price is irrelevant - that is what lets Preview draw out of hours.
+        Check(OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  CloudFastBear, CloudSlowBear, 21600.0, false, LowMult, HighMult, Atr, AtrMult, out z),
+              "gate off: a price that would fail the gate still draws");
+        Check(OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  double.NaN, CloudSlowBear, double.NaN, false, LowMult, HighMult, Atr, AtrMult, out z),
+              "gate off: an absent fast EMA and close still draw");
+
+        // A missing input must fail the gate closed, never open.
+        Check(!OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  double.NaN, CloudSlowBear, 21540.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "gate on: an absent fast EMA draws nothing");
+        Check(!OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  CloudFastBear, CloudSlowBear, double.NaN, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "gate on: an absent close draws nothing");
+        Check(!OptionZoneGeometry.Compute(false, true, PrevHigh, PrevLow,
+                  CloudFastBear, double.NaN, 21540.0, true, LowMult, HighMult, Atr, AtrMult, out z),
+              "an absent slow EMA draws nothing, gate or no gate");
 
         // ---- Close-through, the rule that truncates a zone ----------------------------
         // A zone dies when a bar CLOSES on the far side of it: below a zone you would be
