@@ -124,30 +124,34 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int OptionZoneAtrPeriod { get; set; } = 14;
 
         [NinjaScriptProperty]
-        [Display(Name = "Cutoff hour (ET)", GroupName = "Option zones", Order = 6, Description = "Zones stop at the first bar on or after this ET hour following the bar they were drawn on. 12 ends them at noon ET. Set 0 to let them run until price closes through them.")]
-        public int OptionZoneCutoffHourEt { get; set; } = 12;
+        [Display(Name = "Window start (ET, HHMM)", GroupName = "Option zones", Order = 6, Description = "Earliest ET time an episode may start, as HHMM: 930 is 09:30. Zones outside the session you trade would otherwise take the kept-example slots away from the ones you want to study. Set 0 for no lower bound.")]
+        public int OptionZoneWindowStartEt { get; set; } = 930;
 
         [NinjaScriptProperty]
-        [Display(Name = "Examples kept per side", GroupName = "Option zones", Order = 7, Description = "How many finished episodes to leave on the chart for each bias side, drawn at half opacity and truncated where they died. 3 keeps three bullish-bias and three bearish-bias worked examples. Set 0 to show only the live one.")]
+        [Display(Name = "Window end (ET, HHMM)", GroupName = "Option zones", Order = 7, Description = "ET time zones stop at, as HHMM: 1200 is noon. Nothing opens on or after it, and any live episode is retired when the bar reaches it or the ET day changes. Set 0 to let them run until price closes through them.")]
+        public int OptionZoneWindowEndEt { get; set; } = 1200;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Examples kept per side", GroupName = "Option zones", Order = 8, Description = "How many finished episodes to leave on the chart for each bias side, drawn at half opacity and truncated where they died. 3 keeps three bullish-bias and three bearish-bias worked examples. Raise it to see every episode in a session rather than the most recent few. Set 0 to show only the live one.")]
         public int OptionZoneHistoryPerSide { get; set; } = 3;
 
         [NinjaScriptProperty]
-        [Display(Name = "Labels", GroupName = "Option zones", Order = 8)]
+        [Display(Name = "Labels", GroupName = "Option zones", Order = 9)]
         public bool ShowOptionZoneLabels { get; set; } = true;
 
         [NinjaScriptProperty]
-        [Display(Name = "Opacity", GroupName = "Option zones", Order = 9, Description = "Fill opacity of the three zones, 0 to 100.")]
+        [Display(Name = "Opacity", GroupName = "Option zones", Order = 10, Description = "Fill opacity of the three zones, 0 to 100.")]
         public int OptionZoneOpacity { get; set; } = 20;
 
         [XmlIgnore]
-        [Display(Name = "Long color", GroupName = "Option zones", Order = 10)]
+        [Display(Name = "Long color", GroupName = "Option zones", Order = 11)]
         public Brush OptionZoneLongColor { get; set; } = Brushes.MediumSeaGreen;
 
         [Browsable(false)]
         public string OptionZoneLongColorSerializable { get { return Serialize.BrushToString(OptionZoneLongColor); } set { OptionZoneLongColor = Serialize.StringToBrush(value); } }
 
         [XmlIgnore]
-        [Display(Name = "Short color", GroupName = "Option zones", Order = 11)]
+        [Display(Name = "Short color", GroupName = "Option zones", Order = 12)]
         public Brush OptionZoneShortColor { get; set; } = Brushes.IndianRed;
 
         [Browsable(false)]
@@ -1551,6 +1555,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             // every zone that ever worked. A close beyond the zone in the direction the trade
             // wanted is not an invalidation either - that is the trade paying - so only the
             // one side counts.
+            // Is this bar inside the session window an episode may open in? Times are ET as
+            // HHMM (930 = 09:30). Either bound at 0 is "no bound", so 0/0 is always open.
+            // The window is half-open on purpose: an episode must not open on the very bar
+            // the cutoff retires it.
+            internal static bool InWindow(int hhmm, int startHhmm, int endHhmm)
+            {
+                if (startHhmm > 0 && hhmm < startHhmm) return false;
+                if (endHhmm > 0 && hhmm >= endHhmm) return false;
+                return true;
+            }
+
             internal static bool ClosedThrough(bool isLong, double lo, double hi, double close)
             {
                 if (double.IsNaN(close))
@@ -1583,7 +1598,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             public int StartBar;
             public int EndBar = -1;                  // -1 while live
             public bool BiasBull;
-            public DateTime CutoffEt = DateTime.MaxValue;
+            public DateTime OpenDateEt;      // ET calendar day the episode opened on
+            public int EndHhmm;              // ET cutoff as HHMM, 0 = none
             public readonly double[] Lo = new double[3];
             public readonly double[] Hi = new double[3];
             public readonly bool[] IsLong = new bool[3];
@@ -1684,7 +1700,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (optionZoneLive.ClosedBar[i] < 0) allClosed = false;
                 }
 
-                if (allClosed || ConvertToEastern(Time[0]) >= optionZoneLive.CutoffEt)
+                // The ET-date test is not redundant with the HHMM one. If the session ends
+                // before the cutoff time, the next bar is the following morning at an HHMM
+                // still under the cutoff, and without the date check the episode would stretch
+                // straight across the overnight gap.
+                DateTime etNow = ConvertToEastern(Time[0]);
+                bool pastCutoff = etNow.Date != optionZoneLive.OpenDateEt
+                    || (optionZoneLive.EndHhmm > 0
+                        && etNow.Hour * 100 + etNow.Minute >= optionZoneLive.EndHhmm);
+
+                if (allClosed || pastCutoff)
                     RetireOptionZoneEpisode(CurrentBar);
             }
 
@@ -1777,6 +1802,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (optionZoneLive != null || !optionZoneArmed)
                 return;   // live episode continues, frozen where it was drawn
 
+            // Only inside the session window. This gate applies to Preview too: a preview run
+            // that opened episodes all day would refill the kept-example slots from the
+            // afternoon and evict the morning ones, which is the session you want to study.
+            DateTime openEt = ConvertToEastern(Time[0]);
+            if (!OptionZoneGeometry.InWindow(openEt.Hour * 100 + openEt.Minute,
+                                             OptionZoneWindowStartEt, OptionZoneWindowEndEt))
+                return;
+
             var ep = new OptionZoneEpisode { StartBar = CurrentBar, BiasBull = biasBull };
             ep.Lo[0] = z.Lo1; ep.Hi[0] = z.Hi1; ep.IsLong[0] = z.Long1;
             ep.Lo[1] = z.Lo2; ep.Hi[1] = z.Hi2; ep.IsLong[1] = z.Long2;
@@ -1788,19 +1821,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             for (int i = 0; i < 3; i++)
                 ep.Text[i] = PreviewOptionZones ? text[i] + "  (PREVIEW)" : text[i];
 
-            // The cutoff is the next crossing of the ET hour AFTER this episode opened, not
-            // "any bar past noon". Pinning it to the clock alone would mean an episode that
-            // opens in the afternoon or overnight is born already expired, and nothing would
-            // ever draw outside the morning - including during an out-of-hours review.
-            ep.CutoffEt = DateTime.MaxValue;
-            if (OptionZoneCutoffHourEt >= 1 && OptionZoneCutoffHourEt <= 23)
-            {
-                DateTime startEt = ConvertToEastern(Time[0]);
-                DateTime cutoff = new DateTime(startEt.Year, startEt.Month, startEt.Day,
-                                               OptionZoneCutoffHourEt, 0, 0);
-                if (cutoff <= startEt) cutoff = cutoff.AddDays(1);
-                ep.CutoffEt = cutoff;
-            }
+            ep.OpenDateEt = openEt.Date;
+            ep.EndHhmm = OptionZoneWindowEndEt;
 
             optionZoneLive = ep;
             optionZoneArmed = false;

@@ -227,6 +227,28 @@ internal static class OptionZoneTests
                   CloudFastBear, double.NaN, 21540.0, true, LowMult, HighMult, Atr, AtrMult, out z),
               "an absent slow EMA draws nothing, gate or no gate");
 
+        // ---- The session window -------------------------------------------------------
+        // Episodes may only OPEN inside it. Without one, the afternoon's setups are always
+        // more recent than the morning's and evict them from the kept examples, so a morning
+        // you want to study comes up empty.
+        Check(OptionZoneGeometry.InWindow(930, 930, 1200), "window: the open bar itself is in");
+        Check(OptionZoneGeometry.InWindow(1159, 930, 1200), "window: a minute before the close is in");
+        Check(!OptionZoneGeometry.InWindow(1200, 930, 1200),
+              "window: the cutoff bar is OUT, so nothing opens on the bar that retires it");
+        Check(!OptionZoneGeometry.InWindow(929, 930, 1200), "window: a minute early is out");
+        Check(!OptionZoneGeometry.InWindow(1300, 930, 1200), "window: the afternoon is out");
+        Check(!OptionZoneGeometry.InWindow(300, 930, 1200), "window: the overnight is out");
+
+        // HHMM is not minutes-since-midnight: 9:60 does not exist, and 1000 must be inside a
+        // 930-1200 window rather than compared as though it were 10 x 100 minutes.
+        Check(OptionZoneGeometry.InWindow(1000, 930, 1200), "window: 10:00 is inside 09:30-12:00");
+        Check(OptionZoneGeometry.InWindow(959, 930, 1200), "window: 09:59 is inside");
+
+        // Either bound off.
+        Check(OptionZoneGeometry.InWindow(300, 0, 1200), "window: no start bound lets the overnight in");
+        Check(OptionZoneGeometry.InWindow(1800, 930, 0), "window: no end bound lets the evening in");
+        Check(OptionZoneGeometry.InWindow(1, 0, 0), "window: both bounds off is always open");
+
         // ---- Close-through, the rule that truncates a zone ----------------------------
         // A zone dies when a bar CLOSES on the far side of it: below a zone you would be
         // buying into, above one you would be selling into. Wicks through do not count,
