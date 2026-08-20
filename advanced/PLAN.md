@@ -681,7 +681,29 @@ Add this method and call it from the `BarsInProgress == 0` block immediately aft
         }
 ```
 
-- [ ] **Step 4: Add the rows and the dim**
+- [ ] **Step 4: Draw the ONH / ONL lines**
+
+`ShowOvernightLines` needs something to switch. Add to the end of
+`UpdateAdvancedProximity()` so it runs once per bar on the primary series:
+
+```csharp
+            if (ShowOvernightLines && !double.IsNaN(advOnHigh))
+            {
+                string suffix = advOnPartial ? "*" : string.Empty;
+                Draw.Line(this, "ADVONH_" + advSessionKey, false, CurrentBar, advOnHigh, 0, advOnHigh,
+                          Brushes.MediumPurple, DashStyleHelper.Dash, 1);
+                Draw.Line(this, "ADVONL_" + advSessionKey, false, CurrentBar, advOnLow, 0, advOnLow,
+                          Brushes.MediumPurple, DashStyleHelper.Dash, 1);
+                Draw.Text(this, "ADVONHTxt_" + advSessionKey, "ONH" + suffix, 0, advOnHigh, Brushes.MediumPurple);
+                Draw.Text(this, "ADVONLTxt_" + advSessionKey, "ONL" + suffix, 0, advOnLow, Brushes.MediumPurple);
+            }
+```
+
+The `*` is the partial-container marker: a container that never saw an 18:00 bar
+is real but short, and it says so rather than passing itself off as a full
+overnight.
+
+- [ ] **Step 5: Add the rows and the dim**
 
 In the method that builds `statusRowData`, after the array is assigned, append the advanced rows and dim the LTF CBC row. The base builds a fixed array, so this appends rather than editing the literal:
 
@@ -748,7 +770,7 @@ In the method that builds `statusRowData`, after the array is assigned, append t
             }
 ```
 
-- [ ] **Step 5: Compile**
+- [ ] **Step 6: Compile**
 
 ```bash
 python C:\Users\wolfe\.claude\scripts\test_ninjascript_compile.py D:\Maplestax_CBC-Ninja-wt-advanced\advanced\MapleStaxCBCAdvanced.cs
@@ -756,7 +778,7 @@ python C:\Users\wolfe\.claude\scripts\test_ninjascript_compile.py D:\Maplestax_C
 
 Expected: `0 Error(s)`. If `List<StatusRow>` is undefined, add `using System.Collections.Generic;` to the using block.
 
-- [ ] **Step 6: Re-run the state tests**
+- [ ] **Step 7: Re-run the state tests**
 
 The region must still extract and pass unchanged:
 
@@ -766,12 +788,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\Maplestax_CBC-Ninja-
 
 Expected: `ALL PASS`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /d/Maplestax_CBC-Ninja-wt-advanced
 git add advanced/MapleStaxCBCAdvanced.cs
-git commit -m "feat(advanced): properties, status rows, proximity band"
+git commit -m "feat(advanced): properties, status rows, overnight lines, proximity band"
 ```
 
 ---
