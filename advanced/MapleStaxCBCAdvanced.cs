@@ -525,11 +525,120 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Width", GroupName = "CBC flip levels", Order = 8)]
         public int CbcFlipHtfWidth { get; set; } = 4;
 
+        // ---- Advanced (display-only research overlay) -----------------------
+        // Everything in this group came from a DESCRIPTIVE, non-pre-registered look at
+        // MapleStax's posted calls. It is orientation, not validation, and none of it
+        // gates a signal: requiring two triggers to agree scored WORSE than either alone
+        // in that research, so these settings change emphasis and nothing else.
+        private const string AdvCaveat = " Chosen from a descriptive, non-pre-registered "
+            + "look at MapleStax's posted calls; display-only, not validated.";
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show advanced rows", GroupName = "Advanced", Order = 1,
+            Description = "Adds the overnight container, the significant-level sweep clock, the "
+                        + "LTF trust state and the higher-timeframe EMA20 proximity to the status "
+                        + "table. Changes emphasis only: it never gates, suppresses or vetoes a signal.")]
+        public bool ShowAdvancedRows { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Range(0, 23)]
+        [Display(Name = "Overnight start hour (ET)", GroupName = "Advanced", Order = 2,
+            Description = "Overnight container runs from this hour the prior evening to the RTH "
+                        + "open. CME reopen is 18:00 ET.")]
+        public int OnStartHour { get; set; } = 18;
+
+        [NinjaScriptProperty]
+        [Range(0, 59)]
+        [Display(Name = "Overnight start minute (ET)", GroupName = "Advanced", Order = 3)]
+        public int OnStartMinute { get; set; } = 0;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Draw ONH / ONL lines", GroupName = "Advanced", Order = 4,
+            Description = "Draws the overnight container extremes. A container whose loaded "
+                        + "history never reached the start hour is marked with an asterisk rather "
+                        + "than passing itself off as a full overnight.")]
+        public bool ShowOvernightLines { get; set; } = false;
+
+        [NinjaScriptProperty]
+        [Range(1, 240)]
+        [Display(Name = "Fresh sweep (minutes)", GroupName = "Advanced", Order = 5,
+            Description = "A significant level taken within this many minutes leaves the LTF read "
+                        + "LIVE." + AdvCaveat)]
+        public int FreshMinutes { get; set; } = 15;
+
+        [NinjaScriptProperty]
+        [Range(1, 480)]
+        [Display(Name = "Stale sweep (minutes)", GroupName = "Advanced", Order = 6,
+            Description = "Past this many minutes since the last level was taken, the LTF read is "
+                        + "MUTED." + AdvCaveat)]
+        public int StaleMinutes { get; set; } = 30;
+
+        [NinjaScriptProperty]
+        [Range(0, 2359)]
+        [Display(Name = "LTF cutoff (ET, HHMM)", GroupName = "Advanced", Order = 7,
+            Description = "From this ET time the LTF read is MUTED regardless of sweep age. 1030 "
+                        + "is 10:30. Set 0 to disable the clock half of the rule." + AdvCaveat)]
+        public int LtfCutoffEt { get; set; } = 1030;
+
+        [NinjaScriptProperty]
+        [Range(0.05, 5.0)]
+        [Display(Name = "AT band (x HTF ATR)", GroupName = "Advanced", Order = 8,
+            Description = "Distance from the higher-timeframe EMA20, in HTF ATR units, that counts "
+                        + "as being AT it." + AdvCaveat)]
+        public double ProximityAtr { get; set; } = 0.5;
+
+        [NinjaScriptProperty]
+        [Range(0.1, 10.0)]
+        [Display(Name = "Near band (x HTF ATR)", GroupName = "Advanced", Order = 9,
+            Description = "Beyond this multiple of HTF ATR the reading is far." + AdvCaveat)]
+        public double ProximityNearAtr { get; set; } = 1.5;
+
+        [NinjaScriptProperty]
+        [Range(2, 200)]
+        [Display(Name = "HTF ATR period", GroupName = "Advanced", Order = 10,
+            Description = "ATR period used on the higher timeframe for the proximity reading.")]
+        public int ProximityAtrPeriod { get; set; } = 14;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show proximity band", GroupName = "Advanced", Order = 11,
+            Description = "Shades the AT band around the higher-timeframe EMA20.")]
+        public bool ShowProximityBand { get; set; } = false;
+
+        [XmlIgnore]
+        [Display(Name = "Muted LTF cell", GroupName = "Advanced", Order = 12,
+            Description = "Background for the CBC row while the LTF read is MUTED. The row dims, "
+                        + "it never hides: the signal underneath is unchanged in every state.")]
+        public Brush AdvMutedBg { get; set; } = new SolidColorBrush(Color.FromRgb(60, 60, 60));
+
+        [Browsable(false)]
+        public string AdvMutedBgSerializable { get { return Serialize.BrushToString(AdvMutedBg); } set { AdvMutedBg = Serialize.StringToBrush(value); } }
+
         private TimeZoneInfo etTimeZone;
         private TimeZoneInfo sourceTimeZone;
         private bool htfDataSeriesAdded;
         private BarsPeriod htfBarsPeriod;
         private int htfSeriesIndex = -1;
+
+        // --- Advanced: overnight container, prior-RTH levels, sweep clock -----
+        private double advOnHigh = double.NaN;
+        private double advOnLow = double.NaN;
+        private double advOnFormHigh = double.NaN;
+        private double advOnFormLow = double.NaN;
+        private bool   advOnSawEvening;
+        private bool   advOnPartial;
+        private bool   advOnLocked;
+        private double advPrevRthHigh = double.NaN;
+        private double advPrevRthLow = double.NaN;
+        private double advRthHigh = double.NaN;
+        private double advRthLow = double.NaN;
+        private string advSessionKey = string.Empty;
+        private readonly bool[] advSweptLatch = new bool[6];
+        private int    advLastSweepMin = -1;
+        private string advLastSweepLabel = string.Empty;
+        private int    advSweepAge = -1;
+        private AdvancedState.Trust advTrust = AdvancedState.Trust.NoSweep;
+        private AdvancedState.Proximity advProximity = AdvancedState.Proximity.Unknown;
+        private double advProximityAtr = double.NaN;
 
         private double lastHtfHigh1 = double.NaN;
         private double lastHtfLow1 = double.NaN;
@@ -795,6 +904,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UpdateEmaCloud();
                 UpdateVwapEma200();
                 UpdatePremarketLevels();
+                UpdateAdvancedState();
                 UpdateReferenceLevels();
                 UpdateOpeningRange();
                 UpdateBillBreaker();
@@ -1432,6 +1542,95 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Draw.Line(this, "ADVBRSGTop", false, 1, top, 0, top, BrsgColor, DashStyleHelper.Solid, CbcFlipLtfWidth);
                 Draw.Line(this, "ADVBRSGBot", false, 1, bot, 0, bot, BrsgColor, DashStyleHelper.Solid, CbcFlipLtfWidth);
             }
+        }
+
+        /// <summary>
+        /// Overnight container, prior-RTH levels and the significant-level sweep clock.
+        /// Session-scoped: every latch resets on the ET date roll, so a level taken
+        /// yesterday cannot make today's LTF read look fresh.
+        /// </summary>
+        private void UpdateAdvancedState()
+        {
+            DateTime et = ConvertToEastern(Time[0]);
+            int mod = et.Hour * 60 + et.Minute;
+            string key = et.ToString("yyyyMMdd");
+            int onStartMin = OnStartHour * 60 + OnStartMinute;
+            bool inRth = IsRegular(et);
+
+            if (key != advSessionKey)
+            {
+                // Yesterday's RTH becomes today's prior-RTH reference before anything is
+                // measured against it. This is deliberately NOT the file's PDH/PDL, which
+                // come from the 23-hour Globex session: the research measured prior RTH,
+                // and substituting a different level would make the clock on this chart
+                // disagree with the numbers behind it.
+                if (!double.IsNaN(advRthHigh))
+                {
+                    advPrevRthHigh = advRthHigh;
+                    advPrevRthLow = advRthLow;
+                }
+                advRthHigh = double.NaN;
+                advRthLow = double.NaN;
+                advSessionKey = key;
+                advOnLocked = false;
+                advLastSweepMin = -1;
+                advLastSweepLabel = string.Empty;
+                for (int i = 0; i < advSweptLatch.Length; i++) advSweptLatch[i] = false;
+            }
+
+            // Overnight container: 18:00 the prior evening through the 09:30 open. The
+            // evening leg deliberately survives the midnight date roll, because it belongs
+            // to the session that opens the next morning.
+            bool inContainer = mod >= onStartMin || mod < 9 * 60 + 30;
+            if (inContainer)
+            {
+                if (mod >= onStartMin && !advOnSawEvening)
+                {
+                    advOnSawEvening = true;
+                    advOnFormHigh = High[0];
+                    advOnFormLow = Low[0];
+                }
+                else
+                {
+                    if (double.IsNaN(advOnFormHigh) || High[0] > advOnFormHigh) advOnFormHigh = High[0];
+                    if (double.IsNaN(advOnFormLow) || Low[0] < advOnFormLow) advOnFormLow = Low[0];
+                }
+            }
+            else if (!advOnLocked)
+            {
+                advOnHigh = advOnFormHigh;
+                advOnLow = advOnFormLow;
+                advOnPartial = !advOnSawEvening;   // loaded history never reached 18:00
+                advOnLocked = true;
+                advOnSawEvening = false;
+                advOnFormHigh = double.NaN;
+                advOnFormLow = double.NaN;
+            }
+
+            if (inRth)
+            {
+                if (double.IsNaN(advRthHigh) || High[0] > advRthHigh) advRthHigh = High[0];
+                if (double.IsNaN(advRthLow) || Low[0] < advRthLow) advRthLow = Low[0];
+
+                // The six levels the research measured, in the order the latch array holds.
+                // pmh/pml are the LOCKED premarket extremes, set on the first RTH bar, so
+                // they are settled by the time anything here reads them.
+                double[] lv = { pmh, pml, advOnHigh, advOnLow, advPrevRthHigh, advPrevRthLow };
+                bool[] isHigh = { true, false, true, false, true, false };
+                string[] names = { "PMH", "PML", "ONH", "ONL", "YDH", "YDL" };
+                for (int i = 0; i < lv.Length; i++)
+                {
+                    if (advSweptLatch[i]) continue;
+                    if (!AdvancedState.Taken(isHigh[i], lv[i], High[0], Low[0])) continue;
+                    advSweptLatch[i] = true;
+                    advLastSweepMin = mod;
+                    advLastSweepLabel = names[i];
+                }
+            }
+
+            advSweepAge = AdvancedState.Age(mod, advLastSweepMin);
+            advTrust = AdvancedState.Evaluate(advSweepAge, et.Hour * 100 + et.Minute,
+                                              FreshMinutes, StaleMinutes, LtfCutoffEt);
         }
 
         // <AdvancedState>
