@@ -198,8 +198,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool HtfEnabled { get; set; } = true;
 
         [NinjaScriptProperty]
-        [Display(Name = "Timeframe", GroupName = "HTF Signals", Order = 3)]
-        public string HtfTimeframe { get; set; } = "10";
+        [Display(Name = "Timeframe", GroupName = "HTF Signals", Order = 3,
+            Description = "Higher timeframe for the CBC, EMA cloud and proximity readings. "
+                        + "Defaults to 15 here, against the base indicator's 10, because 15m is "
+                        + "the timeframe the higher-timeframe bias question was answered on.")]
+        public string HtfTimeframe { get; set; } = "15";
 
         [NinjaScriptProperty]
         [Display(Name = "HTF LONG/SHORT labels", GroupName = "HTF Signals", Order = 5)]
@@ -796,6 +799,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AddPlot(new Stroke(Brushes.Orange, 2), PlotStyle.Line, "VWAP");
                 AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "HTFEMAFast");
                 AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "HTFEMASlow");
+                AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "AdvBandUpper");
+                AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "AdvBandLower");
 
                 FreezeIfNeeded(colCbcLong);
                 FreezeIfNeeded(colCbcShort);
@@ -905,6 +910,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UpdateVwapEma200();
                 UpdatePremarketLevels();
                 UpdateAdvancedState();
+                UpdateAdvancedProximity();
                 UpdateReferenceLevels();
                 UpdateOpeningRange();
                 UpdateBillBreaker();
@@ -1633,6 +1639,46 @@ namespace NinjaTrader.NinjaScript.Indicators
                                               FreshMinutes, StaleMinutes, LtfCutoffEt);
         }
 
+        /// <summary>
+        /// Proximity to the higher-timeframe EMA20 in HTF ATR units, the optional shaded
+        /// band, and the optional overnight lines. The band is a Region between two
+        /// transparent plots, which is how this file already draws its EMA clouds.
+        /// </summary>
+        private void UpdateAdvancedProximity()
+        {
+            double ema20 = Values[5][0];
+            double atrVal = double.NaN;
+            if (htfSeriesIndex >= 0 && htfDataSeriesAdded
+                && CurrentBars[htfSeriesIndex] >= ProximityAtrPeriod)
+                atrVal = ATR(BarsArray[htfSeriesIndex], ProximityAtrPeriod)[0];
+
+            advProximity = AdvancedState.Near(Close[0], ema20, atrVal, ProximityAtr, ProximityNearAtr);
+            advProximityAtr = (double.IsNaN(ema20) || double.IsNaN(atrVal) || atrVal <= 0)
+                ? double.NaN
+                : Math.Abs(Close[0] - ema20) / atrVal;
+
+            if (ShowProximityBand && !double.IsNaN(ema20) && !double.IsNaN(atrVal) && atrVal > 0)
+            {
+                Values[6][0] = ema20 + ProximityAtr * atrVal;
+                Values[7][0] = ema20 - ProximityAtr * atrVal;
+                Draw.Region(this, "ADVProxBand_" + CurrentBar, 1, 0, Values[6], Values[7],
+                            null, Brushes.SlateGray, 20);
+            }
+
+            if (ShowOvernightLines && !double.IsNaN(advOnHigh) && !double.IsNaN(advOnLow))
+            {
+                // The asterisk is the partial-container marker: a container that never saw
+                // an 18:00 bar is real but short, and says so.
+                string suffix = advOnPartial ? "*" : string.Empty;
+                Draw.Line(this, "ADVONH_" + advSessionKey, false, CurrentBar, advOnHigh, 0, advOnHigh,
+                          Brushes.MediumPurple, DashStyleHelper.Dash, 1);
+                Draw.Line(this, "ADVONL_" + advSessionKey, false, CurrentBar, advOnLow, 0, advOnLow,
+                          Brushes.MediumPurple, DashStyleHelper.Dash, 1);
+                Draw.Text(this, "ADVONHTxt_" + advSessionKey, "ONH" + suffix, 0, advOnHigh, Brushes.MediumPurple);
+                Draw.Text(this, "ADVONLTxt_" + advSessionKey, "ONL" + suffix, 0, advOnLow, Brushes.MediumPurple);
+            }
+        }
+
         // <AdvancedState>
         // Pure state logic for the advanced readouts. No NinjaTrader type crosses this
         // boundary, which is what lets advanced/tools/run-advanced-tests.ps1 extract this
@@ -2235,6 +2281,87 @@ namespace NinjaTrader.NinjaScript.Indicators
                 new StatusRow { Label = "VWAP",                     Value = vwapMsg,   LeftBg = StatusLabelBg, RightBg = vwapBg,  LeftFg = StatusLabelText, RightFg = PickRightFg(vwapBg) },
                 new StatusRow { Label = "EMA " + EmaTrendPeriod,    Value = ema200Msg, LeftBg = StatusLabelBg, RightBg = e200Bg,  LeftFg = StatusLabelText, RightFg = PickRightFg(e200Bg) },
             };
+
+            if (ShowAdvancedRows)
+                AppendAdvancedRows(et, chartTf, htfTf);
+        }
+
+        /// <summary>
+        /// The advanced readouts, appended to the original table rather than replacing it.
+        /// </summary>
+        private void AppendAdvancedRows(DateTime et, string chartTf, string htfTf)
+        {
+            string trustMsg;
+            switch (advTrust)
+            {
+                case AdvancedState.Trust.Live:
+                    trustMsg = "LIVE (fresh " + advSweepAge + "m)";
+                    break;
+                case AdvancedState.Trust.Fading:
+                    trustMsg = "FADING (" + advSweepAge + "m)";
+                    break;
+                case AdvancedState.Trust.NoSweep:
+                    trustMsg = "NO SWEEP (no level taken)";
+                    break;
+                default:
+                    trustMsg = (LtfCutoffEt > 0 && (et.Hour * 100 + et.Minute) >= LtfCutoffEt)
+                        ? "MUTED (after " + (LtfCutoffEt / 100) + ":" + (LtfCutoffEt % 100).ToString("00") + ")"
+                        : "MUTED (stale " + advSweepAge + "m)";
+                    break;
+            }
+
+            string sweepMsg = advLastSweepMin < 0
+                ? "none taken"
+                : advLastSweepLabel + " " + (advLastSweepMin / 60).ToString("00") + ":"
+                  + (advLastSweepMin % 60).ToString("00") + "  " + advSweepAge + "m ago";
+
+            string onMsg = double.IsNaN(advOnHigh)
+                ? "forming"
+                : advOnHigh.ToString("0.##") + " / " + advOnLow.ToString("0.##")
+                  + (advOnPartial ? "  (partial)" : string.Empty);
+
+            string proxMsg;
+            switch (advProximity)
+            {
+                case AdvancedState.Proximity.At:
+                    proxMsg = advProximityAtr.ToString("0.0") + " ATR  AT";
+                    break;
+                case AdvancedState.Proximity.Near:
+                    proxMsg = advProximityAtr.ToString("0.0") + " ATR  near";
+                    break;
+                case AdvancedState.Proximity.Far:
+                    proxMsg = advProximityAtr.ToString("0.0") + " ATR  far";
+                    break;
+                default:
+                    proxMsg = "no reading";
+                    break;
+            }
+
+            List<StatusRow> rows = new List<StatusRow>(statusRowData);
+            rows.Add(new StatusRow { Label = "LTF trust",  Value = trustMsg, LeftBg = StatusLabelBg, RightBg = StatusNeutralBg, LeftFg = StatusLabelText, RightFg = PickRightFg(StatusNeutralBg) });
+            rows.Add(new StatusRow { Label = "Last sweep", Value = sweepMsg, LeftBg = StatusLabelBg, RightBg = StatusNeutralBg, LeftFg = StatusLabelText, RightFg = PickRightFg(StatusNeutralBg) });
+            rows.Add(new StatusRow { Label = "ONH / ONL",  Value = onMsg,    LeftBg = StatusLabelBg, RightBg = StatusNeutralBg, LeftFg = StatusLabelText, RightFg = PickRightFg(StatusNeutralBg) });
+            rows.Add(new StatusRow { Label = htfTf + " EMA20", Value = proxMsg, LeftBg = StatusLabelBg, RightBg = StatusNeutralBg, LeftFg = StatusLabelText, RightFg = PickRightFg(StatusNeutralBg) });
+
+            // MUTED dims the LTF CBC row and nothing else. A three-way dim is not a
+            // distinction a glance can make reliably, so the colour channel carries the
+            // binary (trust it / do not) and the LTF trust row carries the four-way detail.
+            // It dims, it never hides: the signal underneath is unchanged in every state,
+            // because requiring two reads to agree scored WORSE than either alone.
+            if (advTrust == AdvancedState.Trust.Muted)
+            {
+                string ltfLabel = "CBC (" + chartTf + ")";
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    if (rows[i].Label != ltfLabel) continue;
+                    StatusRow r = rows[i];
+                    r.RightBg = AdvMutedBg;
+                    r.RightFg = PickRightFg(AdvMutedBg);
+                    rows[i] = r;
+                }
+            }
+
+            statusRowData = rows.ToArray();
         }
 
         private void UpdateBarColoring()
