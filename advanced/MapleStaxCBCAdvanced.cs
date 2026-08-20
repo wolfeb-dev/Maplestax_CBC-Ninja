@@ -1434,6 +1434,80 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        // <AdvancedState>
+        // Pure state logic for the advanced readouts. No NinjaTrader type crosses this
+        // boundary, which is what lets advanced/tools/run-advanced-tests.ps1 extract this
+        // exact region and compile it standalone against AdvancedStateTests.cs. Keep it
+        // that way, and keep BCL calls fully qualified: the extracted file has no usings.
+        //
+        // Every threshold that reaches this code arrives from a property whose default came
+        // from a DESCRIPTIVE, non-pre-registered look at MapleStax's posted calls. Nothing
+        // here is validated, and nothing here gates a signal: these states change emphasis
+        // only. Requiring two triggers to agree scored WORSE than either alone in that
+        // research, which is why there is no confluence rule anywhere in this file.
+        internal static class AdvancedState
+        {
+            internal enum Trust { Live, Fading, Muted, NoSweep }
+            internal enum Proximity { At, Near, Far, Unknown }
+
+            /// <summary>
+            /// A level is TAKEN when a bar trades through it. Bar extreme, not close:
+            /// "takes out a level" is about the trade through it, and a close-only test
+            /// would miss the wick sweep that is the whole point of watching the level.
+            /// An unformed level (NaN) is never taken.
+            /// </summary>
+            internal static bool Taken(bool isHigh, double level, double barHigh, double barLow)
+            {
+                if (double.IsNaN(level)) return false;
+                return isHigh ? barHigh > level : barLow < level;
+            }
+
+            /// <summary>
+            /// Minutes since a sweep, from ET minutes-of-day. Returns -1 when there is
+            /// nothing to measure from, which callers must treat as "no sweep" and never
+            /// as zero minutes: zero reads as maximally fresh, the exact inversion of what
+            /// the research found for the nothing-taken-yet state.
+            /// </summary>
+            internal static int Age(int etNowMin, int lastSweepMin)
+            {
+                if (lastSweepMin < 0 || etNowMin < lastSweepMin) return -1;
+                return etNowMin - lastSweepMin;
+            }
+
+            /// <summary>
+            /// The whole trust rule in one place. LIVE only while a level is freshly taken
+            /// AND the clock is early. MUTED once the sweep goes stale OR the cutoff passes.
+            /// NoSweep when nothing has been taken yet, which is NOT a warm-up state: with
+            /// no level taken the 3m read was the weakest thing measured, so it must never
+            /// read LIVE. A cutoff of 0 disables the clock half of the rule.
+            /// </summary>
+            internal static Trust Evaluate(int sweepAgeMin, int etHhmm, int freshMin, int staleMin, int cutoffHhmm)
+            {
+                if (sweepAgeMin < 0) return Trust.NoSweep;
+                bool lateOnClock = cutoffHhmm > 0 && etHhmm >= cutoffHhmm;
+                if (sweepAgeMin > staleMin || lateOnClock) return Trust.Muted;
+                if (sweepAgeMin <= freshMin) return Trust.Live;
+                return Trust.Fading;
+            }
+
+            /// <summary>
+            /// Distance from the higher-timeframe EMA20 in HTF ATR units. Unknown on a
+            /// missing or non-positive ATR rather than a confident AT: a band that claims
+            /// certainty when it cannot measure is worse than one that says nothing.
+            /// </summary>
+            internal static Proximity Near(double price, double ema20, double atr,
+                                           double atMult, double nearMult)
+            {
+                if (double.IsNaN(price) || double.IsNaN(ema20) || double.IsNaN(atr) || atr <= 0)
+                    return Proximity.Unknown;
+                double d = System.Math.Abs(price - ema20) / atr;
+                if (d <= atMult) return Proximity.At;
+                if (d <= nearMult) return Proximity.Near;
+                return Proximity.Far;
+            }
+        }
+        // </AdvancedState>
+
         // <OptionZoneGeometry>
         // Pure geometry for Maple's three trading options. No NinjaTrader type crosses this
         // boundary, which is what lets tools/run-zone-tests.ps1 extract this exact region and
